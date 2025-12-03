@@ -1,8 +1,8 @@
-"use client"
+'use client'
 
-import Link from "next/link"
-import { Button } from "@/components/ui/button"
-import { Bell, Wallet, User, Menu, Plus } from "lucide-react"
+import Link from 'next/link'
+import { Button } from '@/components/ui/button'
+import { Bell, Wallet, User, Menu, Plus, LogIn } from 'lucide-react'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -10,13 +10,23 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-import { Badge } from "@/components/ui/badge"
-import { useState } from "react"
-import { useWallet } from "@/lib/wallet-context"
+} from '@/components/ui/dropdown-menu'
+import { Badge } from '@/components/ui/badge'
+import { useState } from 'react'
+import { useWallet } from '@/lib/wallet-context'
+import { WalletConnectModal } from './wallet-connect-modal'
 
 export function Header() {
-  const { isConnected, address, userName, connectWallet, disconnectWallet } = useWallet()
+  const { 
+    isAuthenticated, 
+    isConnected, 
+    address, 
+    userName, 
+    connectWallet, 
+    disconnectWallet,
+    switchAccount,
+    signOut 
+  } = useWallet()
   const [notifications, setNotifications] = useState(3)
 
   const formatAddress = (addr: string) => {
@@ -24,18 +34,27 @@ export function Header() {
   }
 
   return (
-    <header className="sticky top-0 z-50 w-full border-b border-border bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/60">
+    <header className="sticky top-0 z-50 w-full border-b border-border bg-card/95 backdrop-blur supports-backdrop-filter:bg-card/60">
       <div className="container mx-auto px-4 lg:px-8">
         <div className="flex h-16 items-center justify-between">
           {/* 네비게이션 */}
           <nav className="flex items-center gap-6">
-            <Link href="/" className="text-sm font-medium transition-colors hover:text-primary">
+            <Link
+              href="/"
+              className="text-sm font-medium transition-colors hover:text-primary"
+            >
               질문 목록
             </Link>
-            <Link href="/my-page" className="text-sm font-medium transition-colors hover:text-primary">
+            <Link
+              href="/my-page"
+              className="text-sm font-medium transition-colors hover:text-primary"
+            >
               마이페이지
             </Link>
-            <Link href="/leaderboard" className="text-sm font-medium transition-colors hover:text-primary">
+            <Link
+              href="/leaderboard"
+              className="text-sm font-medium transition-colors hover:text-primary"
+            >
               리더보드
             </Link>
           </nav>
@@ -67,26 +86,46 @@ export function Header() {
                   <DropdownMenuSeparator />
                   <DropdownMenuItem>
                     <div className="flex flex-col gap-1">
-                      <p className="text-sm font-medium">새로운 답변이 달렸습니다</p>
-                      <p className="text-xs text-muted-foreground">React Hooks에 대한 질문에 답변이...</p>
+                      <p className="text-sm font-medium">
+                        새로운 답변이 달렸습니다
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        React Hooks에 대한 질문에 답변이...
+                      </p>
                     </div>
                   </DropdownMenuItem>
                   <DropdownMenuItem>
                     <div className="flex flex-col gap-1">
                       <p className="text-sm font-medium">관심 태그 알림</p>
-                      <p className="text-xs text-muted-foreground">TypeScript 관련 새 질문이 등록됐어요</p>
+                      <p className="text-xs text-muted-foreground">
+                        TypeScript 관련 새 질문이 등록됐어요
+                      </p>
                     </div>
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
             )}
 
-            {isConnected ? (
+            {!isAuthenticated ? (
+              <>
+                <Button size="sm" variant="default">
+                  <LogIn className="mr-2 h-4 w-4" />
+                  <span className="hidden sm:inline-block">로그인</span>
+                </Button>
+                <WalletConnectModal />
+              </>
+            ) : isConnected ? (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="outline" size="sm" className="gap-2 bg-transparent">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-2 bg-transparent"
+                  >
                     <User className="h-4 w-4" />
-                    <span className="hidden sm:inline-block">{userName || (address && formatAddress(address))}</span>
+                    <span className="hidden sm:inline-block">
+                      {userName || (address && formatAddress(address))}
+                    </span>
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
@@ -95,11 +134,17 @@ export function Header() {
                   <DropdownMenuItem asChild>
                     <Link href="/my-page">마이페이지</Link>
                   </DropdownMenuItem>
-                  <DropdownMenuItem asChild>
-                    <Link href="/settings">설정</Link>
-                  </DropdownMenuItem>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={disconnectWallet}>지갑 연결 해제</DropdownMenuItem>
+                  <DropdownMenuItem onClick={switchAccount}>
+                    <Wallet className="mr-2 h-4 w-4" />
+                    계정 전환
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={disconnectWallet}>
+                    지갑 연결 해제
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={signOut}>
+                    로그아웃
+                  </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
             ) : (
