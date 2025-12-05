@@ -320,7 +320,7 @@ export default function AskPage() {
                     {tokenBalance < reward[0] && (
                       <div className="rounded-lg border border-yellow-500 bg-yellow-50 p-3 text-sm text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-200">
                         <p className="font-semibold">
-                          ⚠️ 토큰 잔액이 부족합니다
+                        토큰 잔액이 부족합니다
                         </p>
                         <p className="text-xs mt-1">
                           현재 잔액: {tokenBalance.toFixed(2)} WAK, 필요:{' '}
@@ -346,7 +346,7 @@ export default function AskPage() {
                     </div>
                     <div className="rounded-lg border border-border bg-muted/50 p-3 text-sm">
                       <p className="text-muted-foreground">
-                        💡 높은 보상은 더 빠르고 질 높은 답변을 받을 수 있습니다
+                        높은 보상은 더 빠르고 질 높은 답변을 받을 수 있습니다
                       </p>
                     </div>
                   </CardContent>

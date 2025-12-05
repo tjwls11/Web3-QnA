@@ -31,9 +31,26 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ user: null })
     }
 
-    // 레벨 계산: 초기 레벨 1, 답변 1개당 레벨 1 증가
+    // 레벨 계산
+    // - 레벨 1부터 시작
+    // - 답변 수가 많아질수록 요구 개수가 커지는 방식
+    //   예시:
+    //   레벨 1: 0개 이상
+    //   레벨 2: 5개 이상
+    //   레벨 3: 15개 이상
+    //   레벨 4: 30개 이상
+    //   레벨 5: 50개 이상
+    //   레벨 6: 80개 이상 ...
     const answerCount = user.answerCount || 0
-    const level = 1 + answerCount
+    const levelThresholds = [0, 5, 15, 30, 50, 80]
+    let level = 1
+    for (let i = 0; i < levelThresholds.length; i++) {
+      if (answerCount >= levelThresholds[i]) {
+        level = i + 1
+      } else {
+        break
+      }
+    }
 
     return NextResponse.json({
       user: {
@@ -48,6 +65,7 @@ export async function GET(request: NextRequest) {
         reputation: user.reputation || 0,
         level: level,
         createdAt: user.createdAt.getTime(),
+        interestTags: user.interestTags || [],
       },
     })
   } catch (error: any) {
@@ -61,7 +79,7 @@ export async function PUT(request: NextRequest) {
   try {
     const token = request.cookies.get('token')?.value
     const body = await request.json()
-    const { userName, avatarUrl } = body
+    const { userName, avatarUrl, interestTags } = body
 
     if (!token) {
       return NextResponse.json(
@@ -97,6 +115,24 @@ export async function PUT(request: NextRequest) {
     }
     if (avatarUrl !== undefined) {
       updateData.avatarUrl = avatarUrl || null
+    }
+    if (interestTags !== undefined) {
+      if (!Array.isArray(interestTags)) {
+        return NextResponse.json(
+          { error: 'interestTags는 문자열 배열이어야 합니다.' },
+          { status: 400 }
+        )
+      }
+      // 문자열만 허용, 공백 제거, 중복 제거
+      const normalized = Array.from(
+        new Set(
+          interestTags
+            .filter((t: any) => typeof t === 'string')
+            .map((t: string) => t.trim())
+            .filter((t: string) => t.length > 0)
+        )
+      )
+      updateData.interestTags = normalized
     }
 
     if (Object.keys(updateData).length === 0) {

@@ -20,20 +20,20 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url)
     const userAddress = searchParams.get('userAddress')
 
+    // 인증이 없으면 빈 배열 반환 (에러 대신)
     if (!token) {
-      return NextResponse.json(
-        { error: '인증이 필요합니다.' },
-        { status: 401 }
-      )
+      return NextResponse.json({
+        transactions: [],
+      })
     }
 
     // JWT 토큰 검증
     const payload = await verifyToken(token)
     if (!payload) {
-      return NextResponse.json(
-        { error: '토큰이 만료되었거나 유효하지 않습니다.' },
-        { status: 401 }
-      )
+      // 토큰이 유효하지 않으면 빈 배열 반환 (에러 대신)
+      return NextResponse.json({
+        transactions: [],
+      })
     }
 
     const client = await clientPromise
@@ -90,7 +90,19 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    if (!type || !ethAmount || !wakAmount || !userAddress) {
+    // 유효성 검사
+    // type: 'exchange' | 'withdraw' (문자열만 확인)
+    // ethAmount: 숫자 (0 허용, undefined/null만 오류)
+    // wakAmount: 숫자 (0 허용, undefined/null만 오류)
+    // userAddress: 필수 문자열
+    if (
+      !type ||
+      ethAmount === undefined ||
+      ethAmount === null ||
+      wakAmount === undefined ||
+      wakAmount === null ||
+      !userAddress
+    ) {
       return NextResponse.json(
         { error: '필수 필드가 누락되었습니다.' },
         { status: 400 }
@@ -114,21 +126,8 @@ export async function POST(request: NextRequest) {
 
     await transactionsCollection.insertOne(transaction)
 
-    // 사용자의 토큰 잔액 업데이트
-    const authUsersCollection = db.collection('authUsers')
-    if (type === 'exchange') {
-      // 환전: 토큰 잔액 증가
-      await authUsersCollection.updateOne(
-        { email: payload.email },
-        { $inc: { tokenBalance: Number(wakAmount) } }
-      )
-    } else if (type === 'withdraw') {
-      // 출금: 토큰 잔액 감소
-      await authUsersCollection.updateOne(
-        { email: payload.email },
-        { $inc: { tokenBalance: -Number(wakAmount) } }
-      )
-    }
+    // 토큰 잔액은 온체인 WAKVaultToken.balanceOf를 "진실"로 사용하므로
+    // 여기서는 DB tokenBalance 를 직접 + / - 하지 않는다.
 
     return NextResponse.json({ success: true })
   } catch (error: any) {
@@ -139,6 +138,7 @@ export async function POST(request: NextRequest) {
     )
   }
 }
+
 
 
 

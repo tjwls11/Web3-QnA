@@ -134,6 +134,21 @@ export function WalletConnectModal() {
     }
   }, [isAuthenticated, isConnected, isRegistered, userWalletAddress])
 
+  // 커스텀 이벤트로 모달 열기
+  useEffect(() => {
+    const handleOpenModal = () => {
+      if (!isAuthenticated) {
+        setIsOpen(true)
+        setView('auth')
+      }
+    }
+
+    window.addEventListener('openWalletModal', handleOpenModal)
+    return () => {
+      window.removeEventListener('openWalletModal', handleOpenModal)
+    }
+  }, [isAuthenticated])
+
   const handleAuth = async () => {
     if (!email.trim() || !password.trim()) {
       alert('이메일과 비밀번호를 입력해주세요.')

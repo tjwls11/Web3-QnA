@@ -12,22 +12,26 @@ interface ProtectedPageProps {
 }
 
 export function ProtectedPage({ children }: ProtectedPageProps) {
-  const { isConnected } = useWallet()
+  const { isAuthenticated, isConnected } = useWallet()
   const router = useRouter()
   const [showModal, setShowModal] = useState(false)
 
   useEffect(() => {
-    if (!isConnected) {
+    // 로그인을 먼저 체크
+    if (!isAuthenticated) {
+      setShowModal(true)
+    } else if (!isConnected) {
+      // 로그인은 했지만 지갑이 연결되지 않은 경우
       setShowModal(true)
     }
-  }, [isConnected])
+  }, [isAuthenticated, isConnected])
 
   const handleModalClose = () => {
     setShowModal(false)
     router.push("/")
   }
 
-  if (!isConnected && showModal) {
+  if ((!isAuthenticated || !isConnected) && showModal) {
     return <WalletRequiredModal onClose={handleModalClose} />
   }
 

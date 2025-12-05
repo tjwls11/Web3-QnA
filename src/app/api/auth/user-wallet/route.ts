@@ -36,7 +36,7 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// 유저의 지갑 주소 저장
+// 유저의 지갑 주소 저장 (지갑 주소만 저장, 토큰 잔액은 DB 기준으로 유지)
 export async function POST(request: NextRequest) {
   try {
     const token = request.cookies.get('token')?.value
@@ -44,10 +44,7 @@ export async function POST(request: NextRequest) {
     const { walletAddress } = body
 
     if (!token) {
-      return NextResponse.json(
-        { error: '인증이 필요합니다.' },
-        { status: 401 }
-      )
+      return NextResponse.json({ error: '인증이 필요합니다.' }, { status: 401 })
     }
 
     if (!walletAddress) {
@@ -71,20 +68,31 @@ export async function POST(request: NextRequest) {
     const db = client.db('wakqna')
     const authUsersCollection = db.collection('authUsers')
 
-    // 유저의 지갑 주소 저장
-    // 지갑 연결 시 tokenBalance는 0으로 초기화 (새로운 지갑이므로)
+    // 기존 DB 토큰 잔액 유지 (ETH -> WAK 환전, 답변 채택 등으로만 변동)
+    const existingUser = await authUsersCollection.findOne({
+      email: payload.email,
+    })
+    const currentBalance = existingUser?.tokenBalance || 0
+
+    // 유저의 지갑 주소만 저장, 토큰 잔액은 기존 값 유지
     await authUsersCollection.updateOne(
       { email: payload.email },
       { 
         $set: { 
           walletAddress: walletAddress.toLowerCase(),
-          tokenBalance: 0, // 지갑 연결 시 토큰 잔액 초기화
-        } 
+          tokenBalance: currentBalance, // 내부 포인트 잔액 유지
+        },
       },
       { upsert: true }
     )
 
-    return NextResponse.json({ success: true })
+    console.log('[지갑 연결] 지갑 주소 저장 완료 (토큰 잔액은 DB 기준 유지):', {
+      walletAddress: walletAddress.toLowerCase(),
+      tokenBalance: currentBalance,
+      unit: 'WAK',
+    })
+
+    return NextResponse.json({ success: true, tokenBalance: currentBalance })
   } catch (error: any) {
     console.error('지갑 주소 저장 실패:', error)
     return NextResponse.json(
@@ -93,4 +101,3 @@ export async function POST(request: NextRequest) {
     )
   }
 }
-

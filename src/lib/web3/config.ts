@@ -10,9 +10,20 @@ export const NETWORK_CONFIG = {
 }
 
 // 컨트랙트 주소
+// AKVaultToken(WAKVaultToken) 하나에 "토큰 + 금고 + 스왑"을 모두 합쳤으므로,
+// 기본적으로 NEXT_PUBLIC_WAK_VAULT_SWAP_CONTRACT_ADDRESS 하나만 설정해도 되게 한다.
+const VAULT_TOKEN_ADDRESS =
+  process.env.NEXT_PUBLIC_WAK_VAULT_SWAP_CONTRACT_ADDRESS ||
+  process.env.NEXT_PUBLIC_WAK_TOKEN_CONTRACT_ADDRESS ||
+  ''
+
 export const CONTRACT_ADDRESSES = {
   QNA_CONTRACT: process.env.NEXT_PUBLIC_QNA_CONTRACT_ADDRESS || '',
-  TOKEN_CONTRACT: process.env.NEXT_PUBLIC_TOKEN_CONTRACT_ADDRESS || '',
+  // ERC20 WAK 토큰 컨트랙트 주소 (AKVaultToken)
+  TOKEN_CONTRACT:
+    process.env.NEXT_PUBLIC_WAK_TOKEN_CONTRACT_ADDRESS || VAULT_TOKEN_ADDRESS,
+  // ETH 금고 + 고정 환율 스왑 컨트랙트 주소 (AKVaultToken)
+  WAK_VAULT_SWAP_CONTRACT: VAULT_TOKEN_ADDRESS,
 }
 
 // IPFS 설정 (질문/답변 내용 저장용)

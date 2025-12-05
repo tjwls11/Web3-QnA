@@ -42,15 +42,17 @@ export async function saveQuestion(question: Question & { content: string }): Pr
   }
 }
 
-// 질문 조회 (MongoDB)
+// 질문 조회 (MongoDB) - 인증 불필요
 export async function getQuestions(): Promise<Array<Question & { content: string }>> {
   try {
     const response = await fetch('/api/questions')
     if (!response.ok) {
-      throw new Error('질문 조회 실패')
+      // 에러 발생 시 빈 배열 반환 (로그인 없이도 질문 조회 가능)
+      console.log('[질문 조회] API 오류:', response.status)
+      return []
     }
     const data = await response.json()
-    if (!data.questions) {
+    if (!data.questions || !Array.isArray(data.questions)) {
       return []
     }
     
@@ -58,12 +60,12 @@ export async function getQuestions(): Promise<Array<Question & { content: string
     return data.questions.map((q: any) => ({
       ...q,
       id: BigInt(q.id),
-      reward: BigInt(q.reward),
+      reward: BigInt(q.reward || 0),
       createdAt: BigInt(q.createdAt),
-      answerCount: BigInt(q.answerCount),
+      answerCount: BigInt(q.answerCount || 0),
     }))
-  } catch (error) {
-    console.error('질문 조회 실패:', error)
+  } catch (error: any) {
+    console.error('[질문 조회] 실패:', error)
     return []
   }
 }
@@ -99,13 +101,22 @@ export async function getQuestionById(
     }
     
     // 문자열로 받은 BigInt 값들을 BigInt로 변환
-    return {
+    const question = {
       ...data.question,
       id: BigInt(data.question.id),
       reward: BigInt(data.question.reward),
       createdAt: BigInt(data.question.createdAt),
       answerCount: BigInt(data.question.answerCount),
+      acceptedAnswerId: data.question.acceptedAnswerId || null,
     }
+    
+    console.log('[질문 조회] 로드된 질문:', {
+      id: question.id.toString(),
+      status: question.status,
+      acceptedAnswerId: question.acceptedAnswerId
+    })
+    
+    return question
   } catch (error) {
     console.error('질문 조회 실패:', error)
     return null
@@ -173,14 +184,104 @@ export function getAnswers(): Array<Answer & { content: string }> {
   }))
 }
 
-// 질문 ID로 답변 조회
-export function getAnswersByQuestionId(
+// 질문 ID로 답변 조회 (MongoDB)
+export async function getAnswersByQuestionId(
   questionId: string | number
-): Array<Answer & { content: string }> {
-  const answers = getAnswers()
-  return answers.filter(
-    (a) => a.questionId.toString() === questionId.toString()
-  )
+): Promise<Array<Answer & { content: string }>> {
+  try {
+    const normalizedQuestionId = questionId.toString()
+    console.log('[답변 조회] 요청 questionId:', normalizedQuestionId)
+    
+    const response = await fetch(`/api/answers?questionId=${encodeURIComponent(normalizedQuestionId)}`)
+    if (!response.ok) {
+      const errorText = await response.text()
+      console.error('[답변 조회] API 오류:', response.status, errorText)
+      // API 실패 시 localStorage에서 조회 (fallback)
+      const answers = getAnswers()
+      const filtered = answers.filter(
+        (a) => a.questionId.toString() === normalizedQuestionId
+      )
+      console.log('[답변 조회] localStorage fallback 결과:', filtered.length, '개')
+      return filtered
+    }
+    const data = await response.json()
+    console.log('[답변 조회] API 응답:', {
+      answersCount: data.answers?.length || 0,
+      answers: data.answers?.map((a: any) => ({
+        id: a.id,
+        questionId: a.questionId,
+        author: a.author,
+      })),
+    })
+    
+    if (!data.answers || !Array.isArray(data.answers)) {
+      console.warn('[답변 조회] API 응답에 answers 배열이 없거나 유효하지 않음')
+      // localStorage에서 조회 (fallback)
+      const answers = getAnswers()
+      const filtered = answers.filter(
+        (a) => a.questionId.toString() === normalizedQuestionId
+      )
+      console.log('[답변 조회] localStorage fallback 결과:', filtered.length, '개')
+      return filtered
+    }
+    
+    // MongoDB에서 가져온 답변 반환
+    const mappedAnswers = data.answers.map((a: any) => {
+      // id가 문자열인 경우 BigInt로 변환 시도
+      let answerId = BigInt(0)
+      if (a.id) {
+        try {
+          // 숫자 문자열인 경우
+          if (typeof a.id === 'string' && /^\d+$/.test(a.id)) {
+            answerId = BigInt(a.id)
+          } else if (typeof a.id === 'number') {
+            answerId = BigInt(a.id)
+          } else {
+            // 복합 ID인 경우 타임스탬프 부분 추출
+            // 형식: questionId_timestamp_random
+            const parts = a.id.split('_')
+            if (parts.length >= 2 && parts[1]) {
+              // parts[1]이 타임스탬프
+              const timestamp = parseInt(parts[1], 10)
+              if (!isNaN(timestamp)) {
+                answerId = BigInt(timestamp)
+              } else {
+                // 타임스탬프 파싱 실패 시 원본 ID의 해시값 사용
+                answerId = BigInt(a.createdAt || Date.now())
+              }
+            } else {
+              // ID 형식이 예상과 다르면 생성 시간 사용
+              answerId = BigInt(a.createdAt || Date.now())
+            }
+          }
+        } catch (e) {
+          console.warn('[답변 조회] ID 변환 실패:', a.id, e)
+        }
+      }
+      
+      return {
+        id: answerId,
+        questionId: BigInt(a.questionId || 0),
+        author: a.author,
+        content: a.content || '',
+        contentHash: a.contentHash || '',
+        createdAt: BigInt(a.createdAt || 0),
+        isAccepted: a.isAccepted || false,
+      }
+    })
+    
+    console.log('[답변 조회] 최종 반환 답변 수:', mappedAnswers.length)
+    return mappedAnswers
+  } catch (error: any) {
+    console.error('[답변 조회] 실패:', error)
+    // 에러 시 localStorage에서 조회 (fallback)
+    const answers = getAnswers()
+    const filtered = answers.filter(
+      (a) => a.questionId.toString() === questionId.toString()
+    )
+    console.log('[답변 조회] localStorage fallback 결과:', filtered.length, '개')
+    return filtered
+  }
 }
 
 // 찜하기 추가
@@ -283,10 +384,26 @@ export async function getUserAnswers(
   try {
     const response = await fetch(`/api/answers?author=${address}`)
     if (!response.ok) {
-      throw new Error('답변 조회 실패')
+      // 404나 다른 에러의 경우 빈 배열 반환
+      if (response.status === 404 || response.status === 400) {
+        return []
+      }
+      // 서버 에러의 경우에만 로그 출력
+      console.error('답변 조회 실패:', response.status, response.statusText)
+      return []
     }
     const data = await response.json()
-    return data.answers || []
+    // API에서 받은 답변 데이터를 BigInt로 변환
+    return (data.answers || []).map((a: any) => ({
+      id: BigInt(a.id || 0),
+      questionId: BigInt(a.questionId || 0),
+      author: a.author,
+      content: a.content || '',
+      contentHash: a.contentHash || '',
+      createdAt: BigInt(a.createdAt || 0),
+      isAccepted: a.isAccepted || false,
+      questionTitle: a.questionTitle || '',
+    }))
   } catch (error) {
     console.error('답변 조회 실패:', error)
     return []
@@ -382,12 +499,18 @@ export async function getUserTransactions(): Promise<Array<{
   try {
     const response = await fetch('/api/transactions')
     if (!response.ok) {
-      throw new Error('거래 내역 조회 실패')
+      // 401 (Unauthorized) 에러는 조용히 처리 (인증되지 않은 경우 정상)
+      if (response.status === 401) {
+        return []
+      }
+      const errorData = await response.json().catch(() => ({}))
+      console.error('[거래 내역] API 오류:', response.status, errorData)
+      return []
     }
     const data = await response.json()
     return data.transactions || []
-  } catch (error) {
-    console.error('거래 내역 조회 실패:', error)
+  } catch (error: any) {
+    // 네트워크 에러 등은 조용히 처리
     return []
   }
 }

@@ -12,7 +12,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Badge } from '@/components/ui/badge'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useWallet } from '@/lib/wallet-context'
 import { WalletConnectModal } from './wallet-connect-modal'
 
@@ -25,9 +25,48 @@ export function Header() {
     connectWallet, 
     disconnectWallet,
     switchAccount,
-    signOut 
+    signOut,
   } = useWallet()
-  const [notifications, setNotifications] = useState(3)
+  const [notifications, setNotifications] = useState(0)
+  const [notificationItems, setNotificationItems] = useState<
+    Array<{
+      id: string
+      type: string
+      title: string
+      message: string
+      questionId: string | null
+      tags: string[]
+      createdAt: number
+    }>
+  >([])
+
+  useEffect(() => {
+    const loadNotifications = async () => {
+      try {
+        const response = await fetch('/api/notifications')
+        if (!response.ok) {
+          setNotifications(0)
+          setNotificationItems([])
+          return
+        }
+        const data = await response.json()
+        const items = Array.isArray(data.notifications) ? data.notifications : []
+        setNotificationItems(items)
+        setNotifications(items.length)
+      } catch (error) {
+        console.error('[알림] 조회 실패:', error)
+        setNotifications(0)
+        setNotificationItems([])
+      }
+    }
+
+    if (isAuthenticated) {
+      loadNotifications()
+    } else {
+      setNotifications(0)
+      setNotificationItems([])
+    }
+  }, [isAuthenticated])
 
   const formatAddress = (addr: string) => {
     return `${addr.slice(0, 6)}...${addr.slice(-4)}`
@@ -84,37 +123,48 @@ export function Header() {
                 <DropdownMenuContent align="end" className="w-80">
                   <DropdownMenuLabel>알림</DropdownMenuLabel>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem>
-                    <div className="flex flex-col gap-1">
-                      <p className="text-sm font-medium">
-                        새로운 답변이 달렸습니다
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        React Hooks에 대한 질문에 답변이...
-                      </p>
+                  {notificationItems.length === 0 ? (
+                    <div className="px-3 py-6 text-center text-xs text-muted-foreground">
+                      알림이 없습니다.
                     </div>
-                  </DropdownMenuItem>
-                  <DropdownMenuItem>
-                    <div className="flex flex-col gap-1">
-                      <p className="text-sm font-medium">관심 태그 알림</p>
+                  ) : (
+                    notificationItems.map((item) => (
+                      <DropdownMenuItem key={item.id} className="flex flex-col items-start gap-1">
+                        <p className="text-sm font-medium">
+                          {item.type === 'interest-tag-question'
+                            ? '관심 태그 새 질문'
+                            : item.title || '알림'}
+                        </p>
                       <p className="text-xs text-muted-foreground">
-                        TypeScript 관련 새 질문이 등록됐어요
+                          {item.message ||
+                            (item.type === 'interest-tag-question'
+                              ? '관심 태그와 관련된 새 질문이 등록되었습니다.'
+                              : '')}
                       </p>
-                    </div>
                   </DropdownMenuItem>
+                    ))
+                  )}
                 </DropdownMenuContent>
               </DropdownMenu>
             )}
 
             {!isAuthenticated ? (
               <>
-                <Button size="sm" variant="default">
+                <Button 
+                  size="sm" 
+                  variant="default"
+                  onClick={() => {
+                    // WalletConnectModal이 자동으로 열리도록 함
+                    const event = new CustomEvent('openWalletModal')
+                    window.dispatchEvent(event)
+                  }}
+                >
                   <LogIn className="mr-2 h-4 w-4" />
                   <span className="hidden sm:inline-block">로그인</span>
                 </Button>
                 <WalletConnectModal />
               </>
-            ) : isConnected ? (
+            ) : (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button
@@ -124,7 +174,7 @@ export function Header() {
                   >
                     <User className="h-4 w-4" />
                     <span className="hidden sm:inline-block">
-                      {userName || (address && formatAddress(address))}
+                      {userName || '프로필'}
                     </span>
                   </Button>
                 </DropdownMenuTrigger>
@@ -134,24 +184,24 @@ export function Header() {
                   <DropdownMenuItem asChild>
                     <Link href="/my-page">마이페이지</Link>
                   </DropdownMenuItem>
+                  {isConnected && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem onClick={switchAccount}>
+                        <Wallet className="mr-2 h-4 w-4" />
+                        계정 전환
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={disconnectWallet}>
+                        지갑 연결 해제
+                      </DropdownMenuItem>
+                    </>
+                  )}
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={switchAccount}>
-                    <Wallet className="mr-2 h-4 w-4" />
-                    계정 전환
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={disconnectWallet}>
-                    지갑 연결 해제
-                  </DropdownMenuItem>
                   <DropdownMenuItem onClick={signOut}>
                     로그아웃
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
-            ) : (
-              <Button onClick={connectWallet} size="sm" variant="default">
-                <Wallet className="mr-2 h-4 w-4" />
-                <span className="hidden sm:inline-block">지갑 연결</span>
-              </Button>
             )}
 
             {/* 모바일 메뉴 */}

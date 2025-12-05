@@ -1,5 +1,6 @@
 "use client"
 
+import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Wallet, LogIn } from "lucide-react"
@@ -12,10 +13,12 @@ interface WalletRequiredModalProps {
 
 export function WalletRequiredModal({ onClose }: WalletRequiredModalProps) {
   const { isAuthenticated, connectWallet } = useWallet()
+  const [showLoginModal, setShowLoginModal] = useState(false)
 
   const handleConnect = async () => {
     if (!isAuthenticated) {
-      // 인증되지 않았으면 WalletConnectModal이 자동으로 표시됨
+      // 인증되지 않았으면 로그인 모달 표시
+      setShowLoginModal(true)
       return
     }
     await connectWallet()
@@ -63,7 +66,7 @@ export function WalletRequiredModal({ onClose }: WalletRequiredModalProps) {
           </CardContent>
         </Card>
       </div>
-      {!isAuthenticated && <WalletConnectModal />}
+      {showLoginModal && <WalletConnectModal />}
     </>
   )
 }

@@ -41,15 +41,17 @@ import {
   Upload,
   Image as ImageIcon,
   Mail,
+  Wallet,
+  RefreshCw,
 } from 'lucide-react'
 import Link from 'next/link'
 import { useWallet } from '@/lib/wallet-context'
 import { useState, useEffect } from 'react'
 import * as storage from '@/lib/storage'
 import {
-  transferTokens,
   buyTokensWithEth,
   getExchangeRate,
+  withdrawWakForEth,
 } from '@/lib/web3/contract-functions'
 import { getBrowserProvider } from '@/lib/web3/provider'
 import type { Question, Answer } from '@/lib/contracts/types'
@@ -60,10 +62,13 @@ export default function MyPage() {
     avatarUrl,
     currentUserEmail,
     level,
+    isAuthenticated,
+    isConnected,
     updateUserName,
     updateAvatar,
     tokenBalance,
     address,
+    connectWallet,
     refreshTokenBalance,
     deleteAccount,
   } = useWallet()
@@ -71,7 +76,9 @@ export default function MyPage() {
   const [newName, setNewName] = useState('')
   const [isUpdating, setIsUpdating] = useState(false)
   const [isEditAvatarOpen, setIsEditAvatarOpen] = useState(false)
-  const [avatarInputMethod, setAvatarInputMethod] = useState<'upload' | 'url'>('upload')
+  const [avatarInputMethod, setAvatarInputMethod] = useState<'upload' | 'url'>(
+    'upload'
+  )
   const [avatarFile, setAvatarFile] = useState<File | null>(null)
   const [avatarPreview, setAvatarPreview] = useState<string | null>(null)
   const [avatarUrlInput, setAvatarUrlInput] = useState('')
@@ -121,9 +128,9 @@ export default function MyPage() {
       createdAt: number
     }>
   >([])
-  const [activities, setActivities] = useState<
-    Array<{ type: string; content: string; time: string }>
-  >([])
+  const totalQuestions = myQuestions.length
+  const totalAnswers = myAnswers.length
+  const totalAcceptedAnswers = myAnswers.filter((ans) => ans.isAccepted).length
 
   const availableTags = [
     'React',
@@ -154,19 +161,75 @@ export default function MyPage() {
     }
   }, [isEditNameOpen, userName])
 
+  // 관심 태그 로드 (우선순위: 서버 DB > localStorage > 기본값)
   useEffect(() => {
+    const loadInterestTags = async () => {
+      try {
+        const response = await fetch('/api/auth/user')
+        if (response.ok) {
+          const data = await response.json()
+          const user = data.user
+          if (
+            user &&
+            Array.isArray(user.interestTags) &&
+            user.interestTags.length > 0
+          ) {
+            setInterestTags(user.interestTags)
+            localStorage.setItem(
+              'interestTags',
+              JSON.stringify(user.interestTags)
+            )
+            return
+          }
+        }
+      } catch (error) {
+        console.error(
+          '[관심 태그] 사용자 정보 조회 실패, localStorage로 대체:',
+          error
+        )
+      }
+
+      // 서버에서 못 가져온 경우 localStorage 사용
     const savedTags = localStorage.getItem('interestTags')
     if (savedTags) {
+        try {
       setInterestTags(JSON.parse(savedTags))
-    } else {
+          return
+        } catch {
+          // 파싱 실패 시 기본값 사용
+        }
+      }
+
+      // 기본값
       setInterestTags(['React', 'TypeScript', 'Next.js', 'Blockchain'])
     }
+
+    loadInterestTags()
   }, [])
 
+  // 관심 태그 변경 시 DB 및 localStorage에 저장
   useEffect(() => {
-    if (interestTags.length > 0) {
-      localStorage.setItem('interestTags', JSON.stringify(interestTags))
+    if (!interestTags || interestTags.length === 0) {
+      return
     }
+
+      localStorage.setItem('interestTags', JSON.stringify(interestTags))
+
+    const saveTags = async () => {
+      try {
+        await fetch('/api/auth/user', {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ interestTags }),
+        })
+      } catch (error) {
+        console.error('[관심 태그] 서버 저장 실패:', error)
+      }
+    }
+
+    saveTags()
   }, [interestTags])
 
   // 유저의 질문 로드
@@ -202,6 +265,7 @@ export default function MyPage() {
       if (cancelled) return
 
       try {
+        // 마이페이지 진입 시 토큰 잔액을 DB 기준으로 조회
         await refreshTokenBalance()
       } catch (error: any) {
         if (cancelled) return
@@ -328,37 +392,23 @@ export default function MyPage() {
   // 거래 내역 로드 (환전/출금)
   useEffect(() => {
     const loadTransactions = async () => {
+      // 인증되지 않은 경우 거래 내역 로드하지 않음
+      if (!isAuthenticated) {
+        setTransactions([])
+        return
+      }
+
       try {
         const transactionData = await storage.getUserTransactions()
         setTransactions(transactionData)
       } catch (error) {
-        console.error('거래 내역 로드 실패:', error)
+        // 에러는 조용히 처리 (이미 storage에서 빈 배열 반환)
         setTransactions([])
       }
     }
 
     loadTransactions()
-  }, [])
-
-  // 활동 기록 로드
-  useEffect(() => {
-    const loadActivities = async () => {
-      if (!address) {
-        setActivities([])
-        return
-      }
-
-      try {
-        const activityData = await storage.getUserActivities(address)
-        setActivities(activityData)
-      } catch (error) {
-        console.error('활동 기록 로드 실패:', error)
-        setActivities([])
-      }
-    }
-
-    loadActivities()
-  }, [address])
+  }, [isAuthenticated])
 
   const handleNameChange = async () => {
     if (!newName.trim()) {
@@ -499,11 +549,10 @@ export default function MyPage() {
       // WAK를 wei로 변환 (18 decimals)
       const amountInWei = BigInt(Math.floor(amount * 1e18))
 
-      // 현재 지갑 주소에서 자신의 주소로 전송 (실제로는 다른 주소로 전송할 수 있도록 수정 필요)
-      // 여기서는 예시로 자신의 주소로 전송
-      await transferTokens(address, address, amountInWei)
+      // WAK → ETH 출금 컨트랙트 호출
+      await withdrawWakForEth(amountInWei)
 
-      alert(`${amount} WAK를 성공적으로 전송했습니다!`)
+      alert(`${amount} WAK를 ETH로 출금했습니다.`)
       setIsWithdrawOpen(false)
       setWithdrawAmount('')
 
@@ -517,12 +566,12 @@ export default function MyPage() {
         const transactionData = await storage.getUserTransactions()
         setTransactions(transactionData)
       } catch (error) {
-        console.error('거래 내역 로드 실패:', error)
+        console.warn('거래 내역 로드 실패:', error)
       }
     } catch (error: any) {
-      console.error('전송 실패:', error)
+      console.warn('출금 실패:', error)
       setWithdrawError(
-        error.message || '전송에 실패했습니다. 다시 시도해주세요.'
+        error.message || '출금에 실패했습니다. 다시 시도해주세요.'
       )
     } finally {
       setIsWithdrawing(false)
@@ -543,6 +592,12 @@ export default function MyPage() {
       return
     }
 
+    // 최소 0.01 ETH 이상만 환전 허용
+    if (amount < 0.01) {
+      setExchangeError('최소 환전 금액은 0.01 ETH 입니다')
+      return
+    }
+
     if (amount > ethBalance) {
       setExchangeError('ETH 잔액이 부족합니다')
       return
@@ -553,12 +608,11 @@ export default function MyPage() {
       // ETH를 wei로 변환 (18 decimals)
       const amountInWei = BigInt(Math.floor(amount * 1e18))
 
-      // ETH를 보내서 WAK 토큰 받기
+      // ETH를 보내서 WAK 포인트 충전 (IOU)
       await buyTokensWithEth(amountInWei)
 
-      // exchangeRate는 18자리 기준이므로 1e18로 나눠서 실제 비율 계산
-      const rateInEth = Number(exchangeRate) / 1e18
-      const wakAmount = amount * rateInEth
+      // exchangeRate는 이미 "1 ETH = X WAK" 형태의 숫자이므로 그대로 사용
+      const wakAmount = amount * exchangeRate
       alert(`${amount} ETH를 ${wakAmount.toFixed(2)} WAK로 환전했습니다!`)
       setIsExchangeOpen(false)
       setExchangeAmount('')
@@ -580,10 +634,10 @@ export default function MyPage() {
         const transactionData = await storage.getUserTransactions()
         setTransactions(transactionData)
       } catch (error) {
-        console.error('거래 내역 로드 실패:', error)
+        console.warn('거래 내역 로드 실패:', error)
       }
     } catch (error: any) {
-      console.error('환전 실패:', error)
+      console.warn('환전 실패:', error)
       setExchangeError(
         error.message || '환전에 실패했습니다. 다시 시도해주세요.'
       )
@@ -637,13 +691,21 @@ export default function MyPage() {
               <div className="flex flex-col gap-6 sm:flex-row sm:items-start sm:justify-between">
                 <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
                   <div className="relative group">
-                    <Avatar className="h-20 w-20 cursor-pointer" onClick={() => setIsEditAvatarOpen(true)}>
-                      <AvatarImage src={avatarUrl || '/developer-working.png'} />
+                    <Avatar
+                      className="h-20 w-20 cursor-pointer"
+                      onClick={() => setIsEditAvatarOpen(true)}
+                    >
+                      <AvatarImage
+                        src={avatarUrl || '/developer-working.png'}
+                      />
                       <AvatarFallback className="text-2xl">
                         {userName?.[0] || 'test'}
                       </AvatarFallback>
                     </Avatar>
-                    <div className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 group-hover:opacity-100 rounded-full transition-opacity cursor-pointer" onClick={() => setIsEditAvatarOpen(true)}>
+                    <div
+                      className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 group-hover:opacity-100 rounded-full transition-opacity cursor-pointer"
+                      onClick={() => setIsEditAvatarOpen(true)}
+                    >
                       <Edit className="h-5 w-5 text-white" />
                     </div>
                   </div>
@@ -665,6 +727,24 @@ export default function MyPage() {
                         ? `${address.slice(0, 6)}...${address.slice(-4)}`
                         : '지갑이 연결되지 않았습니다'}
                     </p>
+                    {!isConnected && (
+                      <Button
+                        size="sm"
+                        variant="default"
+                        onClick={async () => {
+                          try {
+                            await connectWallet()
+                          } catch (error) {
+                            console.error('지갑 연결 실패:', error)
+                            alert('지갑 연결에 실패했습니다.')
+                          }
+                        }}
+                        className="mb-2"
+                      >
+                        <Wallet className="mr-2 h-4 w-4" />
+                        지갑 연결하기
+                      </Button>
+                    )}
                     <div className="flex flex-wrap gap-2">
                       <Badge variant="outline">React 전문가</Badge>
                       <Badge variant="outline">TypeScript</Badge>
@@ -713,7 +793,7 @@ export default function MyPage() {
                   {tokenBalance === 0 && contractBalance > 0 && (
                     <div className="mb-4 rounded-lg bg-yellow-50 p-3 text-sm text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-200">
                       <p className="font-semibold mb-1">
-                        ⚠️ 토큰이 컨트랙트 주소에 있습니다
+                        토큰이 컨트랙트 주소에 있습니다
                       </p>
                       <p className="text-xs mb-2">
                         컨트랙트 주소 잔액: {contractBalance.toLocaleString()}{' '}
@@ -727,6 +807,19 @@ export default function MyPage() {
                   )}
 
                   <div className="space-y-2">
+                    <Button
+                      className="w-full"
+                      size="sm"
+                      variant="outline"
+                      onClick={async () => {
+                        if (refreshTokenBalance) {
+                          await refreshTokenBalance()
+                        }
+                      }}
+                    >
+                      <RefreshCw className="mr-2 h-4 w-4" />
+                      잔액 새로고침
+                    </Button>
                     <Button
                       className="w-full"
                       size="sm"
@@ -759,28 +852,23 @@ export default function MyPage() {
                       <MessageSquare className="h-4 w-4 text-muted-foreground" />
                       <span className="text-sm">질문</span>
                     </div>
-                    <span className="font-semibold">{myQuestions.length}</span>
+                    <span className="font-semibold">{totalQuestions}</span>
                   </div>
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <CheckCircle2 className="h-4 w-4 text-muted-foreground" />
                       <span className="text-sm">답변</span>
                     </div>
-                    <span className="font-semibold">67</span>
+                    <span className="font-semibold">{totalAnswers}</span>
                   </div>
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <Award className="h-4 w-4 text-muted-foreground" />
                       <span className="text-sm">채택</span>
                     </div>
-                    <span className="font-semibold">45</span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <TrendingUp className="h-4 w-4 text-muted-foreground" />
-                      <span className="text-sm">평판 점수</span>
-                    </div>
-                    <span className="font-semibold">892</span>
+                    <span className="font-semibold">
+                      {totalAcceptedAnswers}
+                    </span>
                   </div>
                 </CardContent>
               </Card>
@@ -793,11 +881,13 @@ export default function MyPage() {
                 <CardContent>
                   <div className="mb-2 flex justify-between text-sm">
                     <span className="font-medium">Level {level}</span>
-                    <span className="text-muted-foreground">Level {level + 1}</span>
+                    <span className="text-muted-foreground">
+                      Level {level + 1}
+                    </span>
                   </div>
                   <Progress value={0} className="mb-2" />
                   <p className="text-xs text-muted-foreground">
-                    답변 1개를 더 작성하면 레벨이 올라갑니다
+                    답변 수가 늘어날수록 레벨이 올라갑니다
                   </p>
                 </CardContent>
               </Card>
@@ -839,12 +929,11 @@ export default function MyPage() {
             {/* 메인 콘텐츠 */}
             <div>
               <Tabs defaultValue="questions" className="w-full">
-                <TabsList className="grid w-full grid-cols-5">
+                <TabsList className="grid w-full grid-cols-4">
                   <TabsTrigger value="questions">내 질문</TabsTrigger>
                   <TabsTrigger value="answers">내 답변</TabsTrigger>
                   <TabsTrigger value="bookmarks">찜 목록</TabsTrigger>
-                  <TabsTrigger value="rewards">보상 내역</TabsTrigger>
-                  <TabsTrigger value="activity">활동 기록</TabsTrigger>
+                  <TabsTrigger value="rewards">환전/출금 내역</TabsTrigger>
                 </TabsList>
 
                 {/* 내 질문 탭 */}
@@ -957,65 +1046,20 @@ export default function MyPage() {
                   )}
                 </TabsContent>
 
-                {/* 보상 내역 탭 */}
+                {/* 환전/출금 내역 탭 */}
                 <TabsContent value="rewards" className="space-y-4">
                   <Card>
                     <CardHeader>
-                      <CardTitle>총 획득 토큰</CardTitle>
+                      <CardTitle>총 환전/출금 토큰</CardTitle>
                       <CardDescription>
-                        전체 기간 동안 획득한 토큰
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="mb-6 text-4xl font-bold text-primary">
-                        {rewards
-                          .reduce((sum, r) => sum + r.amount, 0)
-                          .toLocaleString()}{' '}
-                        WAK
-                      </div>
-                      <div className="space-y-3">
-                        {rewards.length === 0 ? (
-                          <p className="text-center text-muted-foreground py-8">
-                            보상 내역이 없습니다.
-                          </p>
-                        ) : (
-                          rewards.map((reward, index) => (
-                            <div
-                              key={index}
-                              className="flex items-center justify-between rounded-lg border border-border p-4"
-                            >
-                              <div>
-                                <p className="font-medium">{reward.type}</p>
-                                <p className="text-sm text-muted-foreground">
-                                  {reward.date}
-                                  {reward.tx && ` • TX: ${reward.tx}`}
-                                </p>
-                              </div>
-                              <div className="text-right">
-                                <p className="font-bold text-primary">
-                                  +{reward.amount} WAK
-                                </p>
-                              </div>
-                            </div>
-                          ))
-                        )}
-                      </div>
-                    </CardContent>
-                  </Card>
-
-                  {/* 환전/출금 내역 */}
-                  <Card>
-                    <CardHeader>
-                      <CardTitle>환전/출금 내역</CardTitle>
-                      <CardDescription>
-                        ETH ↔ WAK 환전 및 출금 내역
+                        전체 기간 동안 환전/출금으로 이동한 토큰
                       </CardDescription>
                     </CardHeader>
                     <CardContent>
                       <div className="space-y-3">
                         {transactions.length === 0 ? (
                           <p className="text-center text-muted-foreground py-8">
-                            거래 내역이 없습니다.
+                            환전/출금 내역이 없습니다.
                           </p>
                         ) : (
                           transactions.map((tx, index) => (
@@ -1024,75 +1068,22 @@ export default function MyPage() {
                               className="flex items-center justify-between rounded-lg border border-border p-4"
                             >
                               <div>
-                                <p className="font-medium">{tx.type}</p>
+                                <p className="font-medium">
+                                  {tx.type === 'exchange' ? '환전' : '출금'}
+                                </p>
                                 <p className="text-sm text-muted-foreground">
                                   {tx.date} {tx.time}
-                                  {tx.transactionHash && (
-                                    <span className="ml-2">
-                                      • TX: {tx.transactionHash.slice(0, 10)}...
-                                    </span>
-                                  )}
+                                  {tx.transactionHash &&
+                                    ` • TX: ${tx.transactionHash.slice(
+                                      0,
+                                      10
+                                    )}...`}
                                 </p>
-                                {tx.type === '환전' && (
-                                  <p className="text-xs text-muted-foreground mt-1">
-                                    {tx.ethAmount.toFixed(4)} ETH →{' '}
-                                    {tx.wakAmount.toFixed(2)} WAK
-                                  </p>
-                                )}
-                                {tx.type === '출금' && (
-                                  <p className="text-xs text-muted-foreground mt-1">
-                                    {tx.wakAmount.toFixed(2)} WAK 출금
-                                  </p>
-                                )}
                               </div>
                               <div className="text-right">
-                                <p
-                                  className={`font-bold ${
-                                    tx.type === '환전'
-                                      ? 'text-primary'
-                                      : 'text-destructive'
-                                  }`}
-                                >
-                                  {tx.type === '환전' ? '+' : '-'}
+                                <p className="font-bold text-primary">
+                                  {tx.type === 'exchange' ? '+' : '-'}
                                   {tx.wakAmount.toFixed(2)} WAK
-                                </p>
-                                <p className="text-xs text-muted-foreground mt-1">
-                                  {tx.status}
-                                </p>
-                              </div>
-                            </div>
-                          ))
-                        )}
-                      </div>
-                    </CardContent>
-                  </Card>
-                </TabsContent>
-
-                {/* 활동 기록 탭 */}
-                <TabsContent value="activity" className="space-y-4">
-                  <Card>
-                    <CardHeader>
-                      <CardTitle>최근 활동</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="space-y-4">
-                        {activities.length === 0 ? (
-                          <p className="text-center text-muted-foreground py-8">
-                            활동 기록이 없습니다.
-                          </p>
-                        ) : (
-                          activities.map((activity, index) => (
-                            <div key={index} className="flex gap-4">
-                              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/10">
-                                <div className="h-2 w-2 rounded-full bg-primary" />
-                              </div>
-                              <div className="flex-1">
-                                <p className="font-medium">{activity.type}</p>
-                                <p className="text-sm text-muted-foreground">
-                                  {activity.content}
-                                </p>
-                                <p className="mt-1 text-xs text-muted-foreground">
-                                  {activity.time}
                                 </p>
                               </div>
                             </div>
@@ -1225,7 +1216,9 @@ export default function MyPage() {
                 <div className="flex gap-2">
                   <Button
                     type="button"
-                    variant={avatarInputMethod === 'upload' ? 'default' : 'outline'}
+                    variant={
+                      avatarInputMethod === 'upload' ? 'default' : 'outline'
+                    }
                     size="sm"
                     onClick={() => {
                       setAvatarInputMethod('upload')
@@ -1238,7 +1231,9 @@ export default function MyPage() {
                   </Button>
                   <Button
                     type="button"
-                    variant={avatarInputMethod === 'url' ? 'default' : 'outline'}
+                    variant={
+                      avatarInputMethod === 'url' ? 'default' : 'outline'
+                    }
                     size="sm"
                     onClick={() => {
                       setAvatarInputMethod('url')
@@ -1260,7 +1255,13 @@ export default function MyPage() {
                   <div className="flex flex-col gap-4">
                     <div className="flex items-center gap-4">
                       <Avatar className="h-20 w-20">
-                        <AvatarImage src={avatarPreview || avatarUrl || '/developer-working.png'} />
+                        <AvatarImage
+                          src={
+                            avatarPreview ||
+                            avatarUrl ||
+                            '/developer-working.png'
+                          }
+                        />
                         <AvatarFallback className="text-xl">
                           {userName?.[0] || 'U'}
                         </AvatarFallback>
@@ -1584,7 +1585,7 @@ export default function MyPage() {
                   </Button>
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  최소 출금 금액: 10 WAK
+                  최소 출금 금액: {tokenBalance.toLocaleString()} WAK
                 </p>
                 {withdrawError && (
                   <p className="text-sm text-destructive">{withdrawError}</p>
@@ -1650,7 +1651,7 @@ export default function MyPage() {
             <div className="grid gap-4 py-4">
               <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-4">
                 <p className="text-sm font-semibold text-destructive mb-2">
-                  ⚠️ 주의사항
+                  주의사항
                 </p>
                 <ul className="text-sm text-muted-foreground space-y-1 list-disc list-inside">
                   <li>모든 계정 정보가 삭제됩니다</li>

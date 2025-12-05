@@ -19,6 +19,7 @@ import {
   Heart,
 } from 'lucide-react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { useWallet } from '@/lib/wallet-context'
 import { WalletRequiredModal } from '@/components/wallet-required-modal'
 import { useContract } from '@/hooks/useContract'
@@ -87,6 +88,7 @@ const popularQuestions = [
 ]
 
 export default function HomePage() {
+  const router = useRouter()
   const { isConnected, address } = useWallet()
   const { addBookmark, removeBookmark, isBookmarked } = useContract()
   const [showWalletModal, setShowWalletModal] = useState(false)
@@ -95,6 +97,7 @@ export default function HomePage() {
   )
   const [filter, setFilter] = useState<'latest' | 'unanswered'>('latest')
   const [questions, setQuestions] = useState<any[]>([])
+  const [questionAuthors, setQuestionAuthors] = useState<Record<string, { userName: string; avatarUrl: string | null }>>({})
 
   // 질문 목록 로드
   useEffect(() => {
@@ -117,6 +120,41 @@ export default function HomePage() {
         setBookmarkedQuestions(bookmarked)
       }
 
+      // 질문 작성자 정보 로드
+      const authorsInfo: Record<string, { userName: string; avatarUrl: string | null }> = {}
+      await Promise.all(
+        sortedQuestions.map(async (q) => {
+          try {
+            const response = await fetch(`/api/users/by-wallet?walletAddress=${encodeURIComponent(q.author)}`)
+            if (response.ok) {
+              const data = await response.json()
+              if (data.user) {
+                authorsInfo[q.author.toLowerCase()] = {
+                  userName: data.user.userName || q.author.slice(0, 6) + '...' + q.author.slice(-4),
+                  avatarUrl: data.user.avatarUrl || null,
+                }
+              } else {
+                authorsInfo[q.author.toLowerCase()] = {
+                  userName: q.author.slice(0, 6) + '...' + q.author.slice(-4),
+                  avatarUrl: null,
+                }
+              }
+            } else {
+              authorsInfo[q.author.toLowerCase()] = {
+                userName: q.author.slice(0, 6) + '...' + q.author.slice(-4),
+                avatarUrl: null,
+              }
+            }
+          } catch (error) {
+            console.error('작성자 정보 로드 실패:', error)
+            authorsInfo[q.author.toLowerCase()] = {
+              userName: q.author.slice(0, 6) + '...' + q.author.slice(-4),
+              avatarUrl: null,
+            }
+          }
+        })
+      )
+      setQuestionAuthors(authorsInfo)
       setQuestions(sortedQuestions)
     }
 
@@ -262,15 +300,16 @@ export default function HomePage() {
                 </Card>
               ) : (
                 filteredQuestions.map((question) => {
-                  const authorInfo = {
-                    userName:
-                      question.author.slice(0, 6) +
-                      '...' +
-                      question.author.slice(-4),
+                  const authorInfo = questionAuthors[question.author.toLowerCase()] || {
+                    userName: question.author.slice(0, 6) + '...' + question.author.slice(-4),
+                    avatarUrl: null,
                   }
                   const questionIdStr = question.id.toString()
                   const isBooked = bookmarkedQuestions.has(questionIdStr)
                   const timeAgo = getTimeAgo(Number(question.createdAt))
+                  
+                  // DB에서 실제 답변 수 가져오기 (question.answerCount 사용)
+                  const answerCount = Number(question.answerCount) || 0
 
                   return (
                     <Link
@@ -281,8 +320,9 @@ export default function HomePage() {
                         <CardContent className="p-4">
                           <div className="flex gap-3">
                             <Avatar className="h-8 w-8 shrink-0">
+                              <AvatarImage src={authorInfo.avatarUrl || undefined} />
                               <AvatarFallback>
-                                {authorInfo.userName[0]}
+                                {authorInfo.userName[0]?.toUpperCase() || '?'}
                               </AvatarFallback>
                             </Avatar>
 
@@ -322,7 +362,20 @@ export default function HomePage() {
                               </p>
 
                               <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                                <span className="font-medium text-foreground">
+                                <span
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    e.preventDefault()
+                                    router.push(`/user/${question.author}`)
+                                  }}
+                                  className="font-medium text-foreground hover:text-primary transition-colors flex items-center gap-1.5 cursor-pointer"
+                                >
+                                  <Avatar className="h-4 w-4">
+                                    <AvatarImage src={authorInfo.avatarUrl || undefined} />
+                                    <AvatarFallback className="text-[10px]">
+                                      {authorInfo.userName[0]?.toUpperCase() || '?'}
+                                    </AvatarFallback>
+                                  </Avatar>
                                   {authorInfo.userName}
                                 </span>
                                 <span>•</span>
@@ -330,7 +383,7 @@ export default function HomePage() {
                                 <span>•</span>
                                 <span className="flex items-center gap-1">
                                   <MessageSquare className="h-3 w-3" />
-                                  {question.answerCount.toString()}
+                                  {answerCount}
                                 </span>
                                 {isBooked && (
                                   <>

@@ -38,6 +38,7 @@ interface WalletContextType {
   registerUser: (userName: string) => Promise<boolean>
   updateUserName: (userName: string) => Promise<boolean>
   updateAvatar: (avatarUrl: string | null) => Promise<boolean>
+  // ETH -> WAK 환전, 답변 채택 등으로 DB에 저장된 내부 토큰 잔액만 조회
   refreshTokenBalance: () => Promise<void>
   refreshUserInfo: () => Promise<void>
 }
@@ -57,7 +58,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [level, setLevel] = useState(1)
   const [isRegistered, setIsRegistered] = useState(false)
 
-  // 인증 상태 확인 및 사용자 정보 로드
+  // 인증 상태 확인 및 사용자 정보 로드 (JWT 토큰 기반)
   useEffect(() => {
     const checkSession = async () => {
       try {
@@ -65,6 +66,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         if (response.ok) {
           const data = await response.json()
           if (data.authenticated && data.user) {
+            // JWT 토큰이 유효하고 인증된 경우
             setIsAuthenticated(true)
             setCurrentUserEmail(data.user.email)
 
@@ -97,12 +99,61 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
                   // 토큰 잔액도 0으로 설정
                   setTokenBalance(0)
                 }
+              } else {
+                // 사용자 정보가 없으면 인증 상태 초기화
+                setIsAuthenticated(false)
+                setCurrentUserEmail(null)
+                setIsConnected(false)
+                setAddress(null)
+                setUserNameState(null)
+                setAvatarUrl(null)
+                setTokenBalance(0)
+                localStorage.removeItem('walletAddress')
               }
+            } else {
+              // 사용자 정보 조회 실패 시 인증 상태 초기화
+              setIsAuthenticated(false)
+              setCurrentUserEmail(null)
+              setIsConnected(false)
+              setAddress(null)
+              setUserNameState(null)
+              setAvatarUrl(null)
+              setTokenBalance(0)
+              localStorage.removeItem('walletAddress')
             }
+          } else {
+            // JWT 토큰이 없거나 유효하지 않은 경우 - 명시적으로 false 설정
+            setIsAuthenticated(false)
+            setCurrentUserEmail(null)
+            setIsConnected(false)
+            setAddress(null)
+            setUserNameState(null)
+            setAvatarUrl(null)
+            setTokenBalance(0)
+            localStorage.removeItem('walletAddress')
           }
+        } else {
+          // 세션 확인 실패 시 인증 상태 초기화
+          setIsAuthenticated(false)
+          setCurrentUserEmail(null)
+          setIsConnected(false)
+          setAddress(null)
+          setUserNameState(null)
+          setAvatarUrl(null)
+          setTokenBalance(0)
+          localStorage.removeItem('walletAddress')
         }
       } catch (error) {
         console.error('세션 확인 실패:', error)
+        // 에러 발생 시에도 인증 상태 초기화
+        setIsAuthenticated(false)
+        setCurrentUserEmail(null)
+        setIsConnected(false)
+        setAddress(null)
+        setUserNameState(null)
+        setAvatarUrl(null)
+        setTokenBalance(0)
+        localStorage.removeItem('walletAddress')
       }
     }
     checkSession()
@@ -167,14 +218,16 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         }
       }
 
-      // 토큰 잔액 조회
+      // 토큰 잔액 조회 (온체인 기준)
       await refreshTokenBalance()
     } catch (error) {
       console.error('사용자 정보 새로고침 실패:', error)
     }
   }
 
-  // 토큰 잔액 새로고침 (DB에서만 조회, 블록체인 동기화 안 함)
+  // 토큰 잔액 새로고침
+  // - 온체인 WAKVaultToken.balanceOf(address)를 "진실"로 사용
+  // - DB(authUsers.tokenBalance)는 항상 그 값을 복사본으로 동기화
   let refreshTimeout: NodeJS.Timeout | null = null
   const refreshTokenBalance = async () => {
     if (!isAuthenticated) {
@@ -190,30 +243,53 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
     // 500ms debounce로 중복 요청 방지
     refreshTimeout = setTimeout(async () => {
-      console.log('[토큰 잔액] 새로고침 시작 (DB에서만 조회)')
+      console.log('[토큰 잔액] 새로고침 시작 (온체인 기준)')
 
       try {
-        // DB에서만 토큰 잔액 조회 (블록체인 동기화 안 함)
-        const userResponse = await fetch('/api/auth/user')
-        if (userResponse.ok) {
-          const userData = await userResponse.json()
-          if (userData.user) {
-            const dbBalance = userData.user.tokenBalance || 0
-            const userLevel = userData.user.level || 1
-            console.log('[토큰 잔액] DB 잔액 (WAK):', dbBalance)
+        if (!address) {
+          setTokenBalance(0)
+          return
+        }
+
+        const normalizedAddress = address.toLowerCase()
+
+        // 1) 온체인 잔고 조회
+        const onchainBalanceBigInt = await getTokenBalance(normalizedAddress)
+        const onchainBalance = Number(onchainBalanceBigInt) / 1e18
+
+        console.log('[토큰 잔액] 온체인 잔액 (WAK):', onchainBalance)
+        setTokenBalance(onchainBalance)
+
+        // 2) DB에 온체인 잔고 동기화
+        try {
+          await fetch('/api/auth/token-balance', {
+            method: 'PUT',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ tokenBalance: onchainBalance }),
+          })
+        } catch (syncError) {
+          console.warn('[토큰 잔액] DB 동기화 실패 (무시):', syncError)
+        }
+
+        // 3) 레벨은 기존대로 DB에서 조회
+        try {
+          const userResponse = await fetch('/api/auth/user')
+          if (userResponse.ok) {
+            const userData = await userResponse.json()
+            const userLevel = userData.user?.level || 1
             console.log('[레벨] 현재 레벨:', userLevel)
-            setTokenBalance(dbBalance)
             setLevel(userLevel)
           } else {
-            setTokenBalance(0)
             setLevel(1)
           }
-        } else {
-          setTokenBalance(0)
+        } catch (levelError) {
+          console.warn('[레벨] 조회 실패 (무시):', levelError)
           setLevel(1)
         }
       } catch (error: any) {
-        console.error('[토큰 잔액] 조회 실패:', error)
+        console.error('[토큰 잔액] 온체인 조회 실패:', error)
         setTokenBalance(0)
         setLevel(1)
       }
@@ -261,21 +337,36 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       setAddress(account)
       localStorage.setItem('walletAddress', account)
 
-      // 유저 테이블에 지갑 주소 저장
+      // 유저 테이블에 지갑 주소 저장 및 블록체인 잔액 동기화
       try {
-        await fetch('/api/auth/user-wallet', {
+        const response = await fetch('/api/auth/user-wallet', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({ walletAddress: account }),
         })
+
+        if (response.ok) {
+          const data = await response.json()
+          console.log(
+            '[지갑 연결] 블록체인 동기화 완료, 토큰 잔액:',
+            data.tokenBalance,
+            'WAK'
+          )
+          // 동기화된 토큰 잔액을 즉시 반영
+          if (data.tokenBalance !== undefined) {
+            setTokenBalance(data.tokenBalance)
+          }
+        }
       } catch (error) {
         console.error('지갑 주소 저장 실패:', error)
       }
 
-      // 사용자 정보 로드
+      // 사용자 정보 로드 (토큰 잔액도 다시 조회)
       await refreshUserInfo()
+      // 토큰 잔액도 새로고침 (DB 기준)
+      await refreshTokenBalance()
     } catch (error: any) {
       console.error('지갑 연결 실패:', error)
 
@@ -450,42 +541,34 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         }
       }
 
-      // 토큰이 있으면 컨트랙트로 반환
+      // 토큰이 있으면 WAK → ETH 출금 컨트랙트를 통해 모두 환전
       if (walletAddress && tokenBalance > 0) {
         try {
-          const { transferTokens } = await import('./web3/contract-functions')
-          const { CONTRACT_ADDRESSES } = await import('./web3/config')
+          const { withdrawWakForEth } = await import(
+            './web3/contract-functions'
+          )
 
-          if (!CONTRACT_ADDRESSES.TOKEN_CONTRACT) {
-            throw new Error('토큰 컨트랙트 주소가 설정되지 않았습니다.')
-          }
-
-          // 전체 토큰을 컨트랙트로 전송 (가스비는 별도로 필요)
+          // 전체 토큰을 ETH로 출금 (가스비는 별도로 필요)
           const tokenAmountInWei = BigInt(Math.floor(tokenBalance * 1e18))
 
-          console.log('[회원탈퇴] 토큰 반환 시작:', {
+          console.log('[회원탈퇴] 토큰 출금 시작 (WAK → ETH):', {
             from: walletAddress,
-            to: CONTRACT_ADDRESSES.TOKEN_CONTRACT,
             amount: tokenBalance,
             amountWei: tokenAmountInWei.toString(),
           })
 
-          // 컨트랙트 주소로 토큰 전송
-          await transferTokens(
-            walletAddress,
-            CONTRACT_ADDRESSES.TOKEN_CONTRACT,
-            tokenAmountInWei
-          )
+          // WAK → ETH 출금 실행
+          await withdrawWakForEth(tokenAmountInWei)
 
-          console.log('[회원탈퇴] ✅ 토큰 반환 완료:', tokenBalance, 'WAK')
-          alert(`${tokenBalance} WAK 토큰이 컨트랙트로 반환되었습니다.`)
+          console.log('[회원탈퇴] 토큰 출금 완료:', tokenBalance, 'WAK')
+          alert(`${tokenBalance} WAK 토큰이 ETH로 출금되었습니다.`)
         } catch (tokenError: any) {
-          console.error('[회원탈퇴] 토큰 반환 실패:', tokenError)
-          // 토큰 반환 실패해도 회원탈퇴는 진행
+          console.error('[회원탈퇴] 토큰 출금 실패:', tokenError)
+          // 토큰 출금 실패 시, 사용자가 원하지 않으면 회원탈퇴를 중단
           const errorMsg = tokenError.message || '알 수 없는 오류'
           if (errorMsg.includes('거부') || errorMsg.includes('rejected')) {
             const proceed = window.confirm(
-              '토큰 반환이 거부되었습니다. 토큰은 지갑에 남아있습니다. 회원탈퇴를 계속 진행하시겠습니까?'
+              '토큰 출금이 거부되었습니다. 토큰은 지갑에 남아있습니다. 회원탈퇴를 계속 진행하시겠습니까?'
             )
             if (!proceed) {
               return false
@@ -495,14 +578,14 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
             errorMsg.includes('balance')
           ) {
             const proceed = window.confirm(
-              '토큰 반환에 실패했습니다 (잔액 부족 또는 가스비 부족). 회원탈퇴를 계속 진행하시겠습니까?'
+              '토큰 출금에 실패했습니다 (잔액 부족 또는 가스비 부족). 회원탈퇴를 계속 진행하시겠습니까?'
             )
             if (!proceed) {
               return false
             }
           } else {
             const proceed = window.confirm(
-              `토큰 반환에 실패했습니다: ${errorMsg}. 회원탈퇴를 계속 진행하시겠습니까?`
+              `토큰 출금에 실패했습니다: ${errorMsg}. 회원탈퇴를 계속 진행하시겠습니까?`
             )
             if (!proceed) {
               return false
@@ -594,12 +677,12 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
       if (selectedAccounts && selectedAccounts.length > 0) {
         const newAccount = selectedAccounts[0]
-        
+
         // 계정이 변경된 경우에만 업데이트
         if (newAccount !== address) {
           setAddress(newAccount)
           localStorage.setItem('walletAddress', newAccount)
-          
+
           // 유저 테이블에 새 지갑 주소 저장
           try {
             await fetch('/api/auth/user-wallet', {
@@ -632,7 +715,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
             if (newAccount !== address) {
               setAddress(newAccount)
               localStorage.setItem('walletAddress', newAccount)
-              
+
               try {
                 await fetch('/api/auth/user-wallet', {
                   method: 'POST',
@@ -650,7 +733,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
           }
         } catch (fallbackError: any) {
           console.error('계정 전환 실패:', fallbackError)
-          alert('계정 전환에 실패했습니다. MetaMask에서 직접 계정을 전환해주세요.')
+          alert(
+            '계정 전환에 실패했습니다. MetaMask에서 직접 계정을 전환해주세요.'
+          )
         }
       }
     }
@@ -665,7 +750,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     try {
       const normalizedAddress = address.toLowerCase()
       console.log('[계정 등록] 시작:', { address: normalizedAddress, userName })
-      
+
       const success = await registerUserContract(userName, normalizedAddress)
 
       if (success) {
@@ -685,7 +770,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         alert(`${userName} 계정이 성공적으로 등록되었습니다!`)
         return true
       }
-      
+
       console.error('[계정 등록] 실패: registerUserContract가 false 반환')
       alert('사용자 등록에 실패했습니다. 다시 시도해주세요.')
       return false

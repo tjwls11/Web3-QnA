@@ -54,6 +54,16 @@ export async function POST(request: NextRequest) {
     return response
   } catch (error: any) {
     console.error('로그인 실패:', error)
+    
+    // MongoDB 연결 오류인 경우 더 자세한 메시지 제공
+    if (error.message?.includes('ECONNREFUSED') || error.message?.includes('MongoDB 연결 실패')) {
+      console.error('MongoDB 연결 오류 - 환경 변수 MONGODB_URI를 확인하세요.')
+      return NextResponse.json(
+        { error: '데이터베이스 연결에 실패했습니다. 잠시 후 다시 시도해주세요.' },
+        { status: 503 }
+      )
+    }
+    
     return NextResponse.json(
       { error: '로그인에 실패했습니다.' },
       { status: 500 }

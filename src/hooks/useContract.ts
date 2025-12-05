@@ -113,36 +113,126 @@ export function useContract() {
       setError(null)
 
       try {
-        const answerId = BigInt(Date.now())
+        // 1. IPFS에 답변 내용 업로드하고 contentHash 생성
+        const { uploadToIPFS } = await import('@/lib/ipfs')
+        const contentHash = await uploadToIPFS({ content })
+        console.log('[답변 작성] Content Hash:', contentHash)
+
+        // 2. MongoDB에 답변 저장
+        const response = await fetch('/api/answers', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            questionId: questionId.toString(),
+            author: author.toLowerCase(),
+            content: content,
+            contentHash: contentHash,
+          }),
+        })
+
+        if (!response.ok) {
+          let errorData: any = {}
+          try {
+            const text = await response.text()
+            console.error('[답변 생성] API 에러 응답 텍스트:', text)
+            if (text) {
+              errorData = JSON.parse(text)
+            }
+          } catch (parseError) {
+            console.error('[답변 생성] 에러 응답 파싱 실패:', parseError)
+            errorData = {
+              error: `서버 오류 (${response.status} ${response.statusText})`,
+            }
+          }
+
+          console.error('[답변 생성] API 에러 응답:', {
+            status: response.status,
+            statusText: response.statusText,
+            error: errorData,
+          })
+
+          const errorMessage =
+            errorData.error ||
+            errorData.details ||
+            errorData.message ||
+            `답변 작성에 실패했습니다. (${response.status})`
+          throw new Error(errorMessage)
+        }
+
+        const data = await response.json()
+        const mongoAnswerId =
+          data.answer?.id ||
+          `${questionId}_${Date.now()}_${Math.random()
+            .toString(36)
+            .substring(7)}`
+
+        // 3. 스마트 컨트랙트에 답변 등록 (선택사항 - MetaMask가 연결되어 있을 때만)
+        let answerId: bigint
+        try {
+          const { createAnswerContract } = await import(
+            '@/lib/web3/contract-functions'
+          )
+          const contractAnswerId = await createAnswerContract(
+            questionId,
+            contentHash
+          )
+
+          if (contractAnswerId === null) {
+            // MetaMask가 없어서 null 반환된 경우
+            console.warn(
+              '[답변 작성] MetaMask가 없어 스마트 컨트랙트에 등록하지 않습니다. MongoDB에는 저장되었습니다.'
+            )
+            // MongoDB ID를 사용
+            const idParts = mongoAnswerId.split('_')
+            if (idParts.length >= 2 && /^\d+$/.test(idParts[1])) {
+              answerId = BigInt(idParts[1]) // 타임스탬프 부분 사용
+            } else {
+              answerId = BigInt(Date.now())
+            }
+          } else {
+            console.log(
+              '[답변 작성] 스마트 컨트랙트 답변 ID:',
+              contractAnswerId.toString()
+            )
+            // 스마트 컨트랙트의 답변 ID를 사용
+            answerId = contractAnswerId
+          }
+        } catch (contractError: any) {
+          console.warn(
+            '[답변 작성] 스마트 컨트랙트 등록 실패 (계속 진행):',
+            contractError.message
+          )
+          // 스마트 컨트랙트 등록 실패해도 MongoDB에는 저장됨
+          // MetaMask가 없거나 연결되지 않은 경우 정상적인 동작
+
+          // MongoDB에서 받은 ID를 사용 (fallback)
+          // MongoDB ID는 문자열이므로 타임스탬프 기반 ID 생성
+          try {
+            // MongoDB ID에서 숫자 부분 추출 시도
+            const idParts = mongoAnswerId.split('_')
+            if (idParts.length >= 2 && /^\d+$/.test(idParts[1])) {
+              answerId = BigInt(idParts[1]) // 타임스탬프 부분 사용
+            } else {
+              answerId = BigInt(Date.now())
+            }
+          } catch {
+            answerId = BigInt(Date.now())
+          }
+        }
+
+        // localStorage에도 저장 (캐시)
         const answer: Answer & { content: string } = {
           id: answerId,
           questionId,
           author,
-          contentHash: '',
+          contentHash: contentHash,
           content,
           createdAt: BigInt(Date.now()),
           isAccepted: false,
         }
         storage.saveAnswer(answer)
-
-        // 질문의 답변 수 업데이트 (MongoDB API 호출)
-        const question = await storage.getQuestionById(questionId.toString())
-        if (question) {
-          const updateResponse = await fetch('/api/questions', {
-            method: 'PUT',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              id: questionId.toString(),
-              answerCount: Number(question.answerCount) + 1,
-            }),
-          })
-
-          if (!updateResponse.ok) {
-            console.error('답변 수 업데이트 실패')
-          }
-        }
 
         return answerId
       } catch (err: any) {
@@ -162,21 +252,185 @@ export function useContract() {
       setIsLoading(true)
       setError(null)
 
+      // 원래 답변 ID 저장 (MongoDB 업데이트용)
+      const originalAnswerId = answerId
+
       try {
         // 스마트 컨트랙트에서 답변 채택 (토큰이 자동으로 분배됨)
-        const { acceptAnswer: acceptAnswerContract } = await import(
-          '@/lib/web3/contract-functions'
-        )
-        await acceptAnswerContract(questionId, answerId)
+        const { acceptAnswer: acceptAnswerContract, createAnswerContract } =
+          await import('@/lib/web3/contract-functions')
 
-        // MongoDB에서도 답변 상태 업데이트
-        const answers = storage.getAnswers()
-        const answerIndex = answers.findIndex(
-          (a) => a.id.toString() === answerId.toString()
+        // 먼저 MongoDB에서 답변 정보 조회
+        const answers = await storage.getAnswersByQuestionId(
+          questionId.toString()
         )
-        if (answerIndex !== -1) {
-          answers[answerIndex].isAccepted = true
-          localStorage.setItem('qna_answers', JSON.stringify(answers))
+        const answer = answers.find((a) => {
+          // answerId가 BigInt인 경우와 문자열인 경우 모두 처리
+          if (typeof a.id === 'bigint') {
+            return a.id.toString() === answerId.toString()
+          } else if (a.id !== null && a.id !== undefined) {
+            try {
+              const aId = BigInt(String(a.id))
+              return aId.toString() === answerId.toString()
+            } catch {
+              return false
+            }
+          }
+          return false
+        })
+
+        if (!answer) {
+          throw new Error('답변을 찾을 수 없습니다.')
+        }
+
+        // contentHash가 없으면 IPFS에 업로드하고 생성
+        let contentHash = answer.contentHash
+        if (!contentHash || contentHash === '') {
+          console.log(
+            '[답변 채택] Content Hash가 없습니다. IPFS에 업로드합니다...'
+          )
+          const { uploadToIPFS } = await import('@/lib/ipfs')
+          contentHash = await uploadToIPFS({ content: answer.content })
+
+          // MongoDB에 contentHash 업데이트
+          try {
+            await fetch('/api/answers', {
+              method: 'PUT',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                answerId: originalAnswerId.toString(),
+                contentHash: contentHash,
+              }),
+            })
+          } catch (updateError) {
+            console.warn(
+              '[답변 채택] ContentHash 업데이트 실패 (계속 진행):',
+              updateError
+            )
+          }
+        }
+
+        // 먼저 스마트 컨트랙트에 답변 등록 (없으면 등록, 있으면 에러 무시)
+        let contractAnswerId: bigint | null = null
+        try {
+          console.log('[답변 채택] 스마트 컨트랙트에 답변 등록 시도...')
+          contractAnswerId = await createAnswerContract(questionId, contentHash)
+          if (contractAnswerId !== null) {
+            console.log(
+              '[답변 채택] 스마트 컨트랙트 답변 ID:',
+              contractAnswerId.toString()
+            )
+          }
+        } catch (registerError: any) {
+          // 이미 등록되어 있거나 다른 에러인 경우
+          console.warn(
+            '[답변 채택] 스마트 컨트랙트 등록 실패 또는 이미 등록됨:',
+            registerError.message
+          )
+          // 원래 answerId 사용하여 채택 시도
+          contractAnswerId = answerId
+        }
+
+        // 스마트 컨트랙트의 답변 ID로 채택 시도
+        if (contractAnswerId === null) {
+          throw new Error('스마트 컨트랙트 답변 ID를 가져올 수 없습니다.')
+        }
+
+        try {
+          await acceptAnswerContract(questionId, contractAnswerId)
+        } catch (err: any) {
+          // "Answer not found" 에러인 경우, 답변이 스마트 컨트랙트에 없을 수 있음
+          if (
+            err.reason === 'Answer not found' ||
+            err.message?.includes('Answer not found')
+          ) {
+            console.log(
+              '[답변 채택] 답변이 스마트 컨트랙트에 없습니다. 다시 등록 시도...'
+            )
+
+            // 스마트 컨트랙트에 답변 등록 재시도
+            try {
+              contractAnswerId = await createAnswerContract(
+                questionId,
+                contentHash
+              )
+              if (contractAnswerId === null) {
+                throw new Error('스마트 컨트랙트 답변 ID를 가져올 수 없습니다.')
+              }
+              console.log(
+                '[답변 채택] 스마트 컨트랙트 답변 ID:',
+                contractAnswerId.toString()
+              )
+
+              // 스마트 컨트랙트의 답변 ID로 다시 채택 시도
+              await acceptAnswerContract(questionId, contractAnswerId)
+            } catch (retryError: any) {
+              throw new Error(
+                `답변 채택 실패: ${
+                  retryError.message ||
+                  '스마트 컨트랙트에 답변을 등록할 수 없습니다.'
+                }`
+              )
+            }
+          } else {
+            throw err
+          }
+        }
+
+        // MongoDB에서도 답변 상태 업데이트 (원래 답변 ID 사용)
+        console.log('[답변 채택] MongoDB 업데이트 시작:', {
+          answerId: originalAnswerId.toString(),
+          questionId: questionId.toString(),
+        })
+
+        const answerUpdateResponse = await fetch('/api/answers', {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            answerId: originalAnswerId.toString(),
+            questionId: questionId.toString(),
+          }),
+        })
+
+        console.log('[답변 채택] MongoDB 업데이트 응답:', {
+          status: answerUpdateResponse.status,
+          statusText: answerUpdateResponse.statusText,
+          ok: answerUpdateResponse.ok,
+        })
+
+        if (!answerUpdateResponse.ok) {
+          // 응답 본문을 텍스트로 먼저 읽기
+          const responseText = await answerUpdateResponse.text().catch(() => '')
+          let errorData: any = {}
+          try {
+            if (responseText) {
+              errorData = JSON.parse(responseText)
+            }
+          } catch (parseError) {
+            errorData = { message: responseText || '알 수 없는 에러' }
+          }
+
+          // 치명적인 에러가 아니라 로그만 남기고 계속 진행 (스마트 컨트랙트는 이미 처리됨)
+          console.warn(
+            '[답변 채택] MongoDB 업데이트 비정상 응답 (무시하고 계속 진행):',
+            {
+              status: answerUpdateResponse.status,
+              statusText: answerUpdateResponse.statusText,
+              responseText: responseText,
+              error: errorData,
+              answerId: originalAnswerId.toString(),
+              questionId: questionId.toString(),
+            }
+          )
+        } else {
+          const responseData = await answerUpdateResponse
+            .json()
+            .catch(() => ({}))
+          console.log('[답변 채택] MongoDB 업데이트 성공:', responseData)
         }
 
         // 질문 상태도 업데이트
