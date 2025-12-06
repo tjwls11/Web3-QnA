@@ -5,6 +5,7 @@ import {
   keccak256,
   toUtf8Bytes,
   Interface,
+  isAddress,
 } from 'ethers'
 import { JsonRpcProvider } from 'ethers'
 import {
@@ -112,7 +113,10 @@ async function waitForRpcProvider(
 function getTokenContractReadOnly(): Contract | null {
   const contractAddress = CONTRACT_ADDRESSES.TOKEN_CONTRACT
   console.log('[토큰 컨트랙트] 주소 확인:', contractAddress)
-  console.log('[토큰 컨트랙트] ENV.WAK_TOKEN_CONTRACT:', process.env.NEXT_PUBLIC_WAK_TOKEN_CONTRACT_ADDRESS)
+  console.log(
+    '[토큰 컨트랙트] ENV.WAK_TOKEN_CONTRACT:',
+    process.env.NEXT_PUBLIC_WAK_TOKEN_CONTRACT_ADDRESS
+  )
   console.log(
     '[토큰 컨트랙트] ENV.WAK_VAULT_SWAP_CONTRACT:',
     process.env.NEXT_PUBLIC_WAK_VAULT_SWAP_CONTRACT_ADDRESS
@@ -288,7 +292,7 @@ export async function withdrawWakForEth(wakAmount: bigint): Promise<boolean> {
       throw error
     }
 
-      throw new Error('WAK → ETH 출금에 실패했습니다.')
+    throw new Error('WAK → ETH 출금에 실패했습니다.')
   }
 }
 
@@ -399,7 +403,7 @@ export async function buyTokensWithEth(ethAmount: bigint): Promise<boolean> {
 
   try {
     // 최소 0.01 ETH 이상만 환전 허용 (추가 안전장치)
-    const MIN_ETH_WEI = BigInt(10) ** BigInt(16) // 0.01 ETH
+    const MIN_ETH_WEI = 10_000_000_000_000_000n // 0.01 ETH (1e16 wei)
     if (ethAmount < MIN_ETH_WEI) {
       throw new Error('최소 0.01 ETH 이상 입력해주세요.')
     }
@@ -446,7 +450,10 @@ export async function buyTokensWithEth(ethAmount: bigint): Promise<boolean> {
       signer
     )
 
-    console.log('[환전] WakVaultSwap 컨트랙트 인스턴스 생성 완료:', vaultAddress)
+    console.log(
+      '[환전] WakVaultSwap 컨트랙트 인스턴스 생성 완료:',
+      vaultAddress
+    )
 
     // 실제 가스비 예상 (estimateGas 사용)
     let estimatedGasCost = BigInt(0)
@@ -630,7 +637,8 @@ export async function getExchangeRate(): Promise<bigint> {
         '[환전 비율] WakVaultSwap 컨트랙트 주소가 설정되지 않았습니다.'
       )
       // 기본값: 0.01 ETH = 1 WAK → 1 ETH = 100 WAK
-      return BigInt(100) * BigInt(10) ** BigInt(18)
+      // 100 * 1e18 = 1e20
+      return 100_000_000_000_000_000_000n
     }
 
     const provider = getRpcProvider()
@@ -645,18 +653,18 @@ export async function getExchangeRate(): Promise<bigint> {
 
     if (ethPerWak === BigInt(0)) {
       console.warn('[환전 비율] rate가 0입니다. 기본값 사용.')
-      return BigInt(100) * BigInt(10) ** BigInt(18)
+      return 100_000_000_000_000_000_000n
     }
 
     // 1 ETH = (1e18 / ethPerWak) WAK
     // 18자리 스케일을 위해: (1e18 / ethPerWak) * 1e18 = 1e36 / ethPerWak
-    const ONE_ETHER = BigInt(10) ** BigInt(18)
+    const ONE_ETHER = 1_000_000_000_000_000_000n // 1e18 wei
     const scaled = (ONE_ETHER * ONE_ETHER) / ethPerWak
     return scaled
   } catch (err: any) {
     console.error('[환전 비율] 최종 실패:', err)
     // 기본값: 0.01 ETH = 1 WAK → 1 ETH = 100 WAK
-    return BigInt(100) * BigInt(10) ** BigInt(18)
+    return 100_000_000_000_000_000_000n
   }
 }
 
@@ -778,7 +786,9 @@ export async function getTokenBalance(address: string): Promise<bigint> {
               nameError?.code === 'BAD_DATA' ||
               nameError?.code === 'CALL_EXCEPTION'
             ) {
-              console.warn('[조회] 컨트랙트가 존재하지 않습니다. 배포를 확인하세요.')
+              console.warn(
+                '[조회] 컨트랙트가 존재하지 않습니다. 배포를 확인하세요.'
+              )
               return BigInt(0)
             }
           }
@@ -1171,6 +1181,13 @@ function getQnAContractReadOnly(): Contract | null {
     return null
   }
 
+  if (!isAddress(contractAddress)) {
+    console.error(
+      '[QnA 컨트랙트] 주소 형식이 올바르지 않습니다. 0x로 시작하는 올바른 주소를 설정해주세요.'
+    )
+    return null
+  }
+
   try {
     const provider = getRpcProvider()
     const contract = new Contract(contractAddress, QNA_CONTRACT_ABI, provider)
@@ -1181,11 +1198,165 @@ function getQnAContractReadOnly(): Contract | null {
   }
 }
 
+// 특정 질문/작성자/내용에 해당하는 온체인 답변 ID 찾기
+export async function findOnchainAnswerId(
+  questionId: bigint,
+  authorAddress: string,
+  contentHash?: string
+): Promise<bigint | null> {
+  console.log('[온체인 답변 검색] 시작', {
+    questionId: questionId.toString(),
+    authorAddress,
+    hasContentHash: !!contentHash,
+  })
+
+  try {
+    // 가능한 한 MetaMask(BrowserProvider)를 우선 사용하고,
+    // 없을 때만 RPC Provider로 폴백한다.
+    let provider: any = getBrowserProvider()
+    if (!provider) {
+      console.warn(
+        '[온체인 답변 검색] BrowserProvider가 없어 RPC Provider로 폴백합니다.'
+      )
+      provider = getRpcProvider()
+    } else {
+      const network = await provider.getNetwork()
+      console.log('[온체인 답변 검색] BrowserProvider 네트워크:', {
+        chainId: Number(network.chainId),
+        name: network.name,
+      })
+    }
+
+    const contractAddress = CONTRACT_ADDRESSES.QNA_CONTRACT
+    console.log('[온체인 답변 검색] QnA 컨트랙트 주소:', contractAddress)
+
+    const contract = new Contract(contractAddress, QNA_CONTRACT_ABI, provider)
+
+    const normalizedAuthor = authorAddress.toLowerCase()
+    const answerIds: any[] = await contract.getQuestionAnswers(questionId)
+    console.log(
+      '[온체인 답변 검색] 후보 답변 ID 목록:',
+      answerIds.map((id) => id.toString())
+    )
+
+    // contentHash가 있으면 bytes32로 변환 (createAnswerContract와 동일한 방식)
+    const expectedHash =
+      contentHash && contentHash !== ''
+        ? stringToBytes32(contentHash).toLowerCase()
+        : null
+
+    // 1차 시도: author + contentHash 완전 일치
+    console.log('[온체인 답변 검색] 1차 시도: author + contentHash 매칭', {
+      normalizedAuthor,
+      expectedHash,
+    })
+
+    for (const id of answerIds) {
+      try {
+        const onchainAnswer = await contract.getAnswer(id)
+        const onchainAuthor = (onchainAnswer.author as string).toLowerCase()
+        const onchainHash = (onchainAnswer.contentHash as string).toLowerCase()
+
+        console.log('[온체인 답변 검색] 후보 답변 상세', {
+          id: id.toString(),
+          onchainAuthor,
+          onchainHash,
+        })
+
+        if (onchainAuthor !== normalizedAuthor) {
+          continue
+        }
+
+        if (expectedHash) {
+          if (onchainHash !== expectedHash) {
+            continue
+          }
+        }
+
+        const finalId = BigInt(id.toString())
+        console.log('[온체인 답변 검색] 매칭된 답변 ID:', {
+          questionId: questionId.toString(),
+          author: normalizedAuthor,
+          answerId: finalId.toString(),
+        })
+        return finalId
+      } catch (innerError: any) {
+        console.warn(
+          '[온체인 답변 검색] 개별 답변 조회 실패 (무시하고 다음으로 진행):',
+          {
+            id: id?.toString?.() ?? id,
+            error: innerError?.message || innerError,
+          }
+        )
+      }
+    }
+
+    // 2차 시도: author만 일치 (contentHash는 무시)
+    console.log('[온체인 답변 검색] 2차 시도: author만 매칭')
+    for (const id of answerIds) {
+      try {
+        const onchainAnswer = await contract.getAnswer(id)
+        const onchainAuthor = (onchainAnswer.author as string).toLowerCase()
+        if (onchainAuthor === normalizedAuthor) {
+          const finalId = BigInt(id.toString())
+          console.log('[온체인 답변 검색] author만 매칭된 답변 ID 사용:', {
+            questionId: questionId.toString(),
+            author: normalizedAuthor,
+            answerId: finalId.toString(),
+          })
+          return finalId
+        }
+      } catch (innerError: any) {
+        console.warn(
+          '[온체인 답변 검색] 2차 시도 개별 답변 조회 실패 (무시):',
+          {
+            id: id?.toString?.() ?? id,
+            error: innerError?.message || innerError,
+          }
+        )
+      }
+    }
+
+    // 3차 시도: 아무 조건 없이 첫 번째 답변 사용 (디버그/개발용)
+    if (answerIds.length > 0) {
+      const fallbackId = BigInt(answerIds[0].toString())
+      console.warn(
+        '[온체인 답변 검색] 조건에 맞는 답변을 찾지 못해 첫 번째 답변 ID로 fallback 합니다. (개발 중 임시 동작)',
+        {
+          questionId: questionId.toString(),
+          author: normalizedAuthor,
+          fallbackAnswerId: fallbackId.toString(),
+        }
+      )
+      return fallbackId
+    }
+
+    console.warn(
+      '[온체인 답변 검색] 매칭되는 답변을 찾지 못했습니다 (getQuestionAnswers가 빈 배열):',
+      'questionId=',
+      questionId.toString(),
+      'author=',
+      normalizedAuthor
+    )
+    return null
+  } catch (error: any) {
+    console.error('[온체인 답변 검색] 실패:', error)
+    return null
+  }
+}
+
 // QnA 컨트랙트 쓰기 가능 인스턴스 생성
 function getQnAContract(signer: any): Contract | null {
   const contractAddress = CONTRACT_ADDRESSES.QNA_CONTRACT
   if (!contractAddress || contractAddress === '') {
     console.error('[QnA 컨트랙트] 주소가 설정되지 않았습니다!')
+    return null
+  }
+
+  if (!isAddress(contractAddress)) {
+    console.error(
+      '[QnA 컨트랙트] 주소 형식이 올바르지 않습니다. 0x로 시작하는 올바른 주소를 설정해주세요.'
+    )
     return null
   }
 
@@ -1209,6 +1380,15 @@ export async function approveTokens(
   console.log('[Approve] 금액 (WAK):', Number(amount) / 1e18)
 
   try {
+    // Spender 주소 형식 검증 (ENS 해석 방지)
+    if (!isAddress(spenderAddress)) {
+      throw new Error(
+        `QnA 컨트랙트 주소 형식이 올바르지 않습니다. 0x로 시작하는 전체 주소를 설정해주세요.\n` +
+          `현재 값: ${spenderAddress}\n` +
+          `env: NEXT_PUBLIC_QNA_CONTRACT_ADDRESS`
+      )
+    }
+
     const provider = getBrowserProvider()
     if (!provider) {
       throw new Error('MetaMask가 설치되어 있지 않습니다.')
@@ -1714,10 +1894,7 @@ export async function acceptAnswer(
     // AnswerAccepted 이벤트 확인 (토큰 전송 확인)
     console.log('[채택] ========== 트랜잭션 상세 정보 ==========')
     console.log('[채택] 트랜잭션 해시:', receipt.hash)
-    console.log(
-      '[채택] 트랜잭션 상태:',
-      receipt.status === 1 ? '성공' : '실패'
-    )
+    console.log('[채택] 트랜잭션 상태:', receipt.status === 1 ? '성공' : '실패')
     console.log('[채택] 트랜잭션 로그 수:', receipt.logs.length)
     console.log('[채택] 컨트랙트 주소:', contractAddress.toLowerCase())
     console.log(
@@ -1821,7 +1998,9 @@ export async function acceptAnswer(
         '[채택] 파싱된 이벤트 목록:',
         parsedLogs.map((p: any) => p.name)
       )
-      console.error('[채택] 스마트 컨트랙트에서 토큰이 전송되지 않았을 수 있습니다.')
+      console.error(
+        '[채택] 스마트 컨트랙트에서 토큰이 전송되지 않았을 수 있습니다.'
+      )
       console.error('[채택] 컨트랙트 주소:', CONTRACT_ADDRESSES.QNA_CONTRACT)
       console.error('[채택] 트랜잭션 해시:', receipt.hash)
       console.error(

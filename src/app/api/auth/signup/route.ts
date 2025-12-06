@@ -9,7 +9,7 @@ export async function POST(request: NextRequest) {
 
     if (!email || !password || !userName) {
       return NextResponse.json(
-        { error: '이메일, 비밀번호, 닉네임이 필요합니다.' },
+        { error: '이메일, 비밀번호, 이름이 필요합니다.' },
         { status: 400 }
       )
     }

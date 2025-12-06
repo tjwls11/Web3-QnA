@@ -695,11 +695,9 @@ export default function MyPage() {
                       className="h-20 w-20 cursor-pointer"
                       onClick={() => setIsEditAvatarOpen(true)}
                     >
-                      <AvatarImage
-                        src={avatarUrl || '/developer-working.png'}
-                      />
+                      <AvatarImage src={avatarUrl || undefined} />
                       <AvatarFallback className="text-2xl">
-                        {userName?.[0] || 'test'}
+                        {userName?.[0]?.toUpperCase() || '?'}
                       </AvatarFallback>
                     </Avatar>
                     <div
@@ -712,7 +710,7 @@ export default function MyPage() {
                   <div>
                     <div className="mb-2 flex items-center gap-2">
                       <h1 className="text-2xl font-bold">
-                        {userName || 'test1'}
+                        {userName || '사용자'}
                       </h1>
                       <Badge variant="secondary">Level {level}</Badge>
                     </div>
@@ -949,8 +947,8 @@ export default function MyPage() {
                       </CardContent>
                     </Card>
                   ) : (
-                    myQuestions.map((question) => (
-                      <Card key={question.id.toString()}>
+                    myQuestions.map((question, index) => (
+                      <Card key={`${question.id.toString()}-${index}`}>
                         <CardHeader>
                           <div className="flex items-start justify-between gap-4">
                             <div className="flex-1">
@@ -1106,8 +1104,8 @@ export default function MyPage() {
                       </CardContent>
                     </Card>
                   ) : (
-                    bookmarkedQuestions.map((question) => (
-                      <Card key={question.id.toString()}>
+                    bookmarkedQuestions.map((question, index) => (
+                      <Card key={`${question.id.toString()}-${index}`}>
                         <CardHeader>
                           <div className="flex items-start justify-between gap-4">
                             <div className="flex-1">
@@ -1169,15 +1167,15 @@ export default function MyPage() {
             <DialogHeader>
               <DialogTitle>이름 변경</DialogTitle>
               <DialogDescription>
-                새로운 닉네임을 입력해주세요.
+                새로운 이름을 입력해주세요.
               </DialogDescription>
             </DialogHeader>
             <div className="grid gap-4 py-4">
               <div className="grid gap-2">
-                <Label htmlFor="name">닉네임</Label>
+                <Label htmlFor="name">이름</Label>
                 <Input
                   id="name"
-                  placeholder="새 닉네임을 입력하세요"
+                  placeholder="새 이름을 입력하세요"
                   value={newName}
                   onChange={(e) => setNewName(e.target.value)}
                   onKeyDown={(e) => {
@@ -1259,11 +1257,11 @@ export default function MyPage() {
                           src={
                             avatarPreview ||
                             avatarUrl ||
-                            '/developer-working.png'
+                            undefined
                           }
                         />
                         <AvatarFallback className="text-xl">
-                          {userName?.[0] || 'U'}
+                          {userName?.[0]?.toUpperCase() || '?'}
                         </AvatarFallback>
                       </Avatar>
                       <div className="flex-1">

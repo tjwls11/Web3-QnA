@@ -27,6 +27,7 @@ import {
   Github,
   Link as LinkIcon,
 } from 'lucide-react'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useRouter } from 'next/navigation'
 import { useWallet } from '@/lib/wallet-context'
 import { useContract } from '@/hooks/useContract'
@@ -36,6 +37,9 @@ export default function AskPage() {
   const { address, isAuthenticated, isConnected, connectWallet, tokenBalance } =
     useWallet()
   const { createQuestion, isLoading, error } = useContract()
+  const [questionType, setQuestionType] = useState<'general' | 'code'>(
+    'general'
+  )
   const [title, setTitle] = useState('')
   const [content, setContent] = useState('')
   const [githubUrl, setGithubUrl] = useState('')
@@ -43,6 +47,7 @@ export default function AskPage() {
   const [currentTag, setCurrentTag] = useState('')
   const [reward, setReward] = useState([5])
   const [submitError, setSubmitError] = useState<string | null>(null)
+  const [codeFiles, setCodeFiles] = useState<File[]>([])
 
   const handleAddTag = () => {
     if (currentTag && !tags.includes(currentTag) && tags.length < 5) {
@@ -55,6 +60,11 @@ export default function AskPage() {
     setTags(tags.filter((tag) => tag !== tagToRemove))
   }
 
+  const handleCodeFilesChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || [])
+    setCodeFiles(files)
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setSubmitError(null)
@@ -64,7 +74,7 @@ export default function AskPage() {
       isAuthenticated,
       isConnected,
       title,
-      content,
+      questionType,
     })
 
     if (!isAuthenticated) {
@@ -82,8 +92,19 @@ export default function AskPage() {
       return
     }
 
-    if (!title.trim() || !content.trim()) {
-      setSubmitError('제목과 내용을 입력해주세요.')
+    if (!title.trim()) {
+      setSubmitError('제목을 입력해주세요.')
+      return
+    }
+
+    if (!content.trim()) {
+      setSubmitError('질문 내용을 입력해주세요.')
+      return
+    }
+
+    // 태그 필수 (두 타입 공통)
+    if (tags.length === 0) {
+      setSubmitError('태그를 최소 1개 이상 선택해주세요.')
       return
     }
 
@@ -102,13 +123,16 @@ export default function AskPage() {
       // reward를 wei 단위로 변환 (18 decimals)
       const rewardInWei = BigInt(rewardAmount * 1e18)
 
+      const finalContent = content.trim()
+      const finalGithubUrl = githubUrl.trim() || undefined
+
       const questionId = await createQuestion(
         title.trim(),
-        content.trim(),
+        finalContent,
         rewardInWei,
         tags,
         address,
-        githubUrl.trim() || undefined
+        finalGithubUrl
       )
 
       if (questionId) {
@@ -146,15 +170,27 @@ export default function AskPage() {
             </div>
 
             <div className="w-full">
+              {/* 질문 타입 토글 */}
+              <div className="mb-6">
+                <Tabs
+                  value={questionType}
+                  onValueChange={(v) =>
+                    setQuestionType((v as 'general' | 'code') || 'general')
+                  }
+                >
+                  <TabsList>
+                    <TabsTrigger value="general">일반 Q&amp;A</TabsTrigger>
+                    <TabsTrigger value="code">코드 에러 질문</TabsTrigger>
+                  </TabsList>
+                </Tabs>
+              </div>
+
               {/* 질문 작성 폼 */}
               <form onSubmit={handleSubmit} className="space-y-6">
                 {/* 제목 */}
                 <Card>
                   <CardHeader>
                     <CardTitle>질문 제목</CardTitle>
-                    <CardDescription>
-                      문제를 간단명료하게 요약해주세요
-                    </CardDescription>
                   </CardHeader>
                   <CardContent>
                     <Input
@@ -171,27 +207,20 @@ export default function AskPage() {
                 <Card>
                   <CardHeader>
                     <CardTitle>질문 내용</CardTitle>
-                    <CardDescription>
-                      문제 상황, 시도한 방법, 기대하는 결과를 자세히
-                      설명해주세요
-                    </CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-4">
                     <Textarea
-                      placeholder="질문 내용을 작성하세요 (마크다운 지원)"
+                      placeholder={
+                        questionType === 'code'
+                          ? '에러가 나는 코드, 에러 메시지, 실행 환경 등을 한 번에 정리해서 작성해주세요.'
+                          : '질문 내용을 작성하세요'
+                      }
                       value={content}
                       onChange={(e) => setContent(e.target.value)}
                       required
                       rows={12}
                       className="text-base"
                     />
-                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                      <HelpCircle className="h-4 w-4" />
-                      <span>
-                        마크다운 문법을 지원합니다 (예: **굵게**, `코드`,
-                        ```코드 블록```)
-                      </span>
-                    </div>
 
                     {/* 깃허브 링크 */}
                     <div className="space-y-2">
@@ -207,9 +236,38 @@ export default function AskPage() {
                         className="text-base"
                       />
                       <p className="text-xs text-muted-foreground">
-                        코드 관련 질문인 경우 깃허브 저장소 링크를 추가해주세요
+                        {questionType === 'code'
+                          ? '프로젝트 전체 구조가 필요할 수 있을 때 참고용으로 사용합니다. 대용량일 경우 깃허브 링크를 사용해 주세요.'
+                          : '설계 리뷰나 구조 설명이 필요할 때만 링크를 추가하면 됩니다.'}
                       </p>
                     </div>
+
+                    {/* 코드 에러 질문 전용: 파일 업로드 (선택) */}
+                    {questionType === 'code' && (
+                      <div className="space-y-2 pt-2 border-t mt-4">
+                        <Label className="text-sm font-medium">
+                          코드 / 폴더 파일 업로드 (선택)
+                        </Label>
+                        <Input
+                          type="file"
+                          multiple
+                          accept=".ts,.tsx,.js,.py,.sol,.json,.zip"
+                          onChange={handleCodeFilesChange}
+                          className="text-sm"
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          .ts, .tsx, .js, .py, .sol, .json, .zip 형식만 업로드할
+                          수 있습니다. 대용량 프로젝트는 깃허브 공개 저장소
+                          링크로 공유해 주세요.
+                        </p>
+                        {codeFiles.length > 0 && (
+                          <p className="text-xs text-muted-foreground">
+                            선택된 파일:{' '}
+                            {codeFiles.map((f) => f.name).join(', ')}
+                          </p>
+                        )}
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
 
@@ -319,9 +377,7 @@ export default function AskPage() {
                     </div>
                     {tokenBalance < reward[0] && (
                       <div className="rounded-lg border border-yellow-500 bg-yellow-50 p-3 text-sm text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-200">
-                        <p className="font-semibold">
-                        토큰 잔액이 부족합니다
-                        </p>
+                        <p className="font-semibold">토큰 잔액이 부족합니다</p>
                         <p className="text-xs mt-1">
                           현재 잔액: {tokenBalance.toFixed(2)} WAK, 필요:{' '}
                           {reward[0]} WAK

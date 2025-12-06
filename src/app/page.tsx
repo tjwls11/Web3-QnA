@@ -299,7 +299,7 @@ export default function HomePage() {
                   </CardContent>
                 </Card>
               ) : (
-                filteredQuestions.map((question) => {
+                filteredQuestions.map((question, index) => {
                   const authorInfo = questionAuthors[question.author.toLowerCase()] || {
                     userName: question.author.slice(0, 6) + '...' + question.author.slice(-4),
                     avatarUrl: null,
@@ -313,7 +313,7 @@ export default function HomePage() {
 
                   return (
                     <Link
-                      key={questionIdStr}
+                      key={`${questionIdStr}-${index}`}
                       href={`/question/${questionIdStr}`}
                     >
                       <Card className="transition-all hover:shadow-md hover:border-primary/50 cursor-pointer">

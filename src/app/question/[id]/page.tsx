@@ -19,15 +19,18 @@ import {
   TrendingUp,
   Tag,
   Loader2,
+  Github,
 } from 'lucide-react'
 import Link from 'next/link'
 import Header from '@/components/header'
 import { Footer } from '@/components/footer'
+import { MarkdownContent } from '@/components/markdown-content'
 
 export default function QuestionDetailPage() {
   const params = useParams()
   const router = useRouter()
-  const { isConnected, address, userName, isAuthenticated, connectWallet } = useWallet()
+  const { isConnected, address, userName, isAuthenticated, connectWallet } =
+    useWallet()
   const {
     getQuestion,
     createAnswer,
@@ -42,23 +45,35 @@ export default function QuestionDetailPage() {
   const [question, setQuestion] = useState<any>(null)
   const [answers, setAnswers] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
-  const [answerAuthors, setAnswerAuthors] = useState<Record<string, { userName: string; avatarUrl: string | null }>>({})
-  const [questionAuthor, setQuestionAuthor] = useState<{ userName: string; avatarUrl: string | null } | null>(null)
+  const [answerAuthors, setAnswerAuthors] = useState<
+    Record<string, { userName: string; avatarUrl: string | null }>
+  >({})
+  const [questionAuthor, setQuestionAuthor] = useState<{
+    userName: string
+    avatarUrl: string | null
+  } | null>(null)
 
   // 질문 작성자 정보 로드 함수
   const loadQuestionAuthor = async (authorAddress: string) => {
     try {
-      const response = await fetch(`/api/users/by-wallet?walletAddress=${encodeURIComponent(authorAddress)}`)
+      const response = await fetch(
+        `/api/users/by-wallet?walletAddress=${encodeURIComponent(
+          authorAddress
+        )}`
+      )
       if (response.ok) {
         const data = await response.json()
         if (data.user) {
           setQuestionAuthor({
-            userName: data.user.userName || authorAddress.slice(0, 6) + '...' + authorAddress.slice(-4),
+            userName:
+              data.user.userName ||
+              authorAddress.slice(0, 6) + '...' + authorAddress.slice(-4),
             avatarUrl: data.user.avatarUrl || null,
           })
         } else {
           setQuestionAuthor({
-            userName: authorAddress.slice(0, 6) + '...' + authorAddress.slice(-4),
+            userName:
+              authorAddress.slice(0, 6) + '...' + authorAddress.slice(-4),
             avatarUrl: null,
           })
         }
@@ -79,7 +94,10 @@ export default function QuestionDetailPage() {
 
   // 답변 작성자 정보 로드 함수
   const loadAnswerAuthors = async (answersList: any[]) => {
-    const authorsInfo: Record<string, { userName: string; avatarUrl: string | null }> = {}
+    const authorsInfo: Record<
+      string,
+      { userName: string; avatarUrl: string | null }
+    > = {}
     await Promise.all(
       answersList.map(async (ans: any) => {
         try {
@@ -90,7 +108,9 @@ export default function QuestionDetailPage() {
             const data = await response.json()
             if (data.user) {
               authorsInfo[ans.author.toLowerCase()] = {
-                userName: data.user.userName || ans.author.slice(0, 6) + '...' + ans.author.slice(-4),
+                userName:
+                  data.user.userName ||
+                  ans.author.slice(0, 6) + '...' + ans.author.slice(-4),
                 avatarUrl: data.user.avatarUrl || null,
               }
             } else {
@@ -129,51 +149,74 @@ export default function QuestionDetailPage() {
 
         if (questionData) {
           setQuestion(questionData)
-          
-          console.log('[질문 상세] 질문 ID:', questionData.id.toString(), typeof questionData.id.toString())
-          console.log('[질문 상세] 질문 answerCount:', questionData.answerCount.toString())
+
+          console.log(
+            '[질문 상세] 질문 ID:',
+            questionData.id.toString(),
+            typeof questionData.id.toString()
+          )
+          console.log(
+            '[질문 상세] 질문 answerCount:',
+            questionData.answerCount.toString()
+          )
           console.log('[질문 상세] 질문 status:', questionData.status)
 
           // 답변 로드 (MongoDB) - 질문 ID를 문자열로 전달
           const questionIdString = questionData.id.toString()
           console.log('[질문 상세] 답변 조회할 questionId:', questionIdString)
-          
-          const questionAnswers = await storage.getAnswersByQuestionId(questionIdString)
+
+          const questionAnswers = await storage.getAnswersByQuestionId(
+            questionIdString
+          )
           console.log('[질문 상세] 로드된 답변 수:', questionAnswers.length)
-          
-          // 질문의 acceptedAnswerId 확인
-          const acceptedAnswerId = questionData.acceptedAnswerId || null
+
+          // 질문의 acceptedAnswerId 확인 (타입에 없어서 any로 캐스팅)
+          const acceptedAnswerId =
+            (questionData as any).acceptedAnswerId || null
           console.log('[질문 상세] 질문 정보:', {
             id: questionData.id.toString(),
             status: questionData.status,
-            acceptedAnswerId: acceptedAnswerId
+            acceptedAnswerId: acceptedAnswerId,
           })
-          
+
           // 답변 상세 로그
           questionAnswers.forEach((a, index) => {
-            const isAccepted = a.isAccepted === true || a.id.toString() === acceptedAnswerId
+            const isAccepted =
+              a.isAccepted === true || a.id.toString() === acceptedAnswerId
             console.log(`[질문 상세] 답변 ${index + 1}:`, {
               id: a.id.toString(),
               isAccepted: a.isAccepted,
               acceptedAnswerId: acceptedAnswerId,
-              최종채택여부: isAccepted ? '채택됨' : '미채택'
+              최종채택여부: isAccepted ? '채택됨' : '미채택',
             })
           })
-          
-          const hasAcceptedAnswer = questionAnswers.some(a => 
-            a.isAccepted === true || a.id.toString() === acceptedAnswerId
+
+          const hasAcceptedAnswer = questionAnswers.some(
+            (a) => a.isAccepted === true || a.id.toString() === acceptedAnswerId
           )
           console.log('[질문 상세] 채택된 답변 있음:', hasAcceptedAnswer)
-          
+
           // 채택된 답변이 있거나 질문에 acceptedAnswerId가 있으면 상태를 solved로 설정
-          if ((hasAcceptedAnswer || acceptedAnswerId) && questionData.status !== 'solved') {
-            console.log('[질문 상세] 채택된 답변이 있으므로 상태를 solved로 업데이트')
-            setQuestion({ ...questionData, status: 'solved', acceptedAnswerId: acceptedAnswerId })
+          if (
+            (hasAcceptedAnswer || acceptedAnswerId) &&
+            questionData.status !== 'solved'
+          ) {
+            console.log(
+              '[질문 상세] 채택된 답변이 있으므로 상태를 solved로 업데이트'
+            )
+            setQuestion({
+              ...questionData,
+              status: 'solved',
+              acceptedAnswerId: acceptedAnswerId,
+            })
           } else {
             setQuestion({ ...questionData, acceptedAnswerId: acceptedAnswerId })
           }
-          
+
           setAnswers(questionAnswers)
+
+          // 질문 작성자 정보 로드
+          await loadQuestionAuthor(questionData.author)
 
           // 답변 작성자 정보 로드
           await loadAnswerAuthors(questionAnswers)
@@ -221,7 +264,9 @@ export default function QuestionDetailPage() {
     }
     if (!isConnected || !address) {
       // 로그인 유도 메시지
-      const shouldConnect = window.confirm('답변을 작성하려면 지갑을 연결해야 합니다. 지갑을 연결하시겠습니까?')
+      const shouldConnect = window.confirm(
+        '답변을 작성하려면 지갑을 연결해야 합니다. 지갑을 연결하시겠습니까?'
+      )
       if (shouldConnect) {
         try {
           await connectWallet()
@@ -283,7 +328,9 @@ export default function QuestionDetailPage() {
     // 이미 채택된 답변이 있는지 확인
     const hasAcceptedAnswer = answers.some((ans) => ans.isAccepted)
     if (hasAcceptedAnswer) {
-      alert('이미 채택된 답변이 있습니다. 한 질문에는 하나의 답변만 채택할 수 있습니다.')
+      alert(
+        '이미 채택된 답변이 있습니다. 한 질문에는 하나의 답변만 채택할 수 있습니다.'
+      )
       return
     }
 
@@ -304,19 +351,22 @@ export default function QuestionDetailPage() {
 
         // 즉시 상태 업데이트 (UI 반영)
         setQuestion({ ...question, status: 'solved' })
-        
+
         // 답변 목록 새로고침 (MongoDB)
         const questionAnswers = await storage.getAnswersByQuestionId(
           question.id.toString()
         )
-        console.log('[채택 후] 답변 목록:', questionAnswers.map(a => ({
-          id: a.id.toString(),
-          isAccepted: a.isAccepted
-        })))
-        
+        console.log(
+          '[채택 후] 답변 목록:',
+          questionAnswers.map((a) => ({
+            id: a.id.toString(),
+            isAccepted: a.isAccepted,
+          }))
+        )
+
         // 채택된 답변의 isAccepted를 true로 설정
-        const updatedAnswers = questionAnswers.map(a => 
-          a.id.toString() === answerId.toString() 
+        const updatedAnswers = questionAnswers.map((a) =>
+          a.id.toString() === answerId.toString()
             ? { ...a, isAccepted: true }
             : a
         )
@@ -324,7 +374,7 @@ export default function QuestionDetailPage() {
 
         // 답변 작성자 정보 새로고침
         await loadAnswerAuthors(updatedAnswers)
-        
+
         // 질문 상태 업데이트 (서버에서 최신 상태 가져오기)
         setTimeout(async () => {
           const updatedQuestion = await getQuestion(questionId)
@@ -338,13 +388,15 @@ export default function QuestionDetailPage() {
             await loadAnswerAuthors(freshAnswers)
           }
         }, 500)
-        
+
         // 답변자가 자신인 경우 토큰 잔액 새로고침 (블록체인 동기화 포함)
         if (address) {
           const { useWallet } = await import('@/lib/wallet-context')
           // 답변자 주소 확인은 useWallet hook을 통해 할 수 없으므로
           // 페이지 새로고침을 권장하거나, 답변자가 직접 마이페이지에서 동기화하도록 안내
-          console.log('[채택 완료] 답변자가 토큰을 받았습니다. 마이페이지에서 잔액을 확인하세요.')
+          console.log(
+            '[채택 완료] 답변자가 토큰을 받았습니다. 마이페이지에서 잔액을 확인하세요.'
+          )
         }
       }
     } catch (error: any) {
@@ -430,27 +482,36 @@ export default function QuestionDetailPage() {
                     </h1>
                     {(() => {
                       const acceptedAnswerId = question.acceptedAnswerId || null
-                      const hasAcceptedAnswer = answers.some((ans) => 
-                        ans.isAccepted === true || ans.id.toString() === acceptedAnswerId
+                      const hasAcceptedAnswer = answers.some(
+                        (ans) =>
+                          ans.isAccepted === true ||
+                          ans.id.toString() === acceptedAnswerId
                       )
                       const isQuestionSolved = question.status === 'solved'
-                      const isSolved = isQuestionSolved || hasAcceptedAnswer || !!acceptedAnswerId
-                      
+                      const isSolved =
+                        isQuestionSolved ||
+                        hasAcceptedAnswer ||
+                        !!acceptedAnswerId
+
                       console.log('[UI] 질문 해결 상태:', {
                         status: question.status,
                         acceptedAnswerId: acceptedAnswerId,
-                        answers: answers.map(a => ({ 
-                          id: a.id.toString(), 
+                        answers: answers.map((a) => ({
+                          id: a.id.toString(),
                           isAccepted: a.isAccepted,
-                          matchesAcceptedId: a.id.toString() === acceptedAnswerId
+                          matchesAcceptedId:
+                            a.id.toString() === acceptedAnswerId,
                         })),
                         hasAcceptedAnswer,
                         isQuestionSolved,
-                        isSolved
+                        isSolved,
                       })
-                      
+
                       return isSolved ? (
-                        <Badge variant="default" className="bg-green-600 hover:bg-green-700">
+                        <Badge
+                          variant="default"
+                          className="bg-green-600 hover:bg-green-700"
+                        >
                           <Award className="h-3 w-3 mr-1" />
                           해결됨
                         </Badge>
@@ -480,8 +541,21 @@ export default function QuestionDetailPage() {
                 </Button>
               </div>
 
-              <div className="mb-6 whitespace-pre-wrap text-sm leading-relaxed">
-                {question.content}
+              <div className="mb-6 space-y-3">
+                <MarkdownContent content={question.content} />
+                {question.githubUrl && question.githubUrl !== '' && (
+                  <div className="flex items-center gap-2 text-sm">
+                    <Github className="h-4 w-4" />
+                    <a
+                      href={question.githubUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-primary hover:underline break-all"
+                    >
+                      {question.githubUrl}
+                    </a>
+                  </div>
+                )}
               </div>
 
               <div className="flex items-center justify-between pt-4 border-t">
@@ -491,14 +565,21 @@ export default function QuestionDetailPage() {
                     className="flex items-center gap-2 hover:opacity-80 transition-opacity"
                   >
                     <Avatar className="h-8 w-8">
-                      <AvatarImage src={questionAuthor?.avatarUrl || undefined} />
+                      <AvatarImage
+                        src={questionAuthor?.avatarUrl || undefined}
+                      />
                       <AvatarFallback>
-                        {questionAuthor?.userName?.[0]?.toUpperCase() || question.author[0]?.toUpperCase() || '?'}
+                        {questionAuthor?.userName?.[0]?.toUpperCase() ||
+                          question.author[0]?.toUpperCase() ||
+                          '?'}
                       </AvatarFallback>
                     </Avatar>
                     <div>
                       <p className="text-sm font-medium">
-                        {questionAuthor?.userName || question.author.slice(0, 6) + '...' + question.author.slice(-4)}
+                        {questionAuthor?.userName ||
+                          question.author.slice(0, 6) +
+                            '...' +
+                            question.author.slice(-4)}
                       </p>
                     </div>
                   </Link>
@@ -533,12 +614,17 @@ export default function QuestionDetailPage() {
                   </Card>
                 ) : (
                   answers.map((ans, index) => {
-                    const authorInfo = answerAuthors[ans.author.toLowerCase()] || {
-                      userName: ans.author.slice(0, 6) + '...' + ans.author.slice(-4),
+                    const authorInfo = answerAuthors[
+                      ans.author.toLowerCase()
+                    ] || {
+                      userName:
+                        ans.author.slice(0, 6) + '...' + ans.author.slice(-4),
                       avatarUrl: null,
                     }
                     const acceptedAnswerId = question.acceptedAnswerId || null
-                    const isThisAnswerAccepted = ans.isAccepted === true || ans.id.toString() === acceptedAnswerId
+                    const isThisAnswerAccepted =
+                      ans.isAccepted === true ||
+                      ans.id.toString() === acceptedAnswerId
                     // 고유한 key 생성: id + questionId + index 조합
                     const uniqueKey = `${ans.id.toString()}_${ans.questionId.toString()}_${index}`
                     return (
@@ -552,14 +638,17 @@ export default function QuestionDetailPage() {
                           </div>
                         )}
 
-                        <div className="mb-4 whitespace-pre-wrap text-sm leading-relaxed">
-                          {ans.content}
-                        </div>
+                        <MarkdownContent
+                          content={ans.content}
+                          className="mb-4"
+                        />
 
                         <div className="flex items-center justify-between pt-4 border-t">
                           <div className="flex items-center gap-3">
                             <Avatar className="h-10 w-10">
-                              <AvatarImage src={authorInfo.avatarUrl || undefined} />
+                              <AvatarImage
+                                src={authorInfo.avatarUrl || undefined}
+                              />
                               <AvatarFallback>
                                 {authorInfo.userName?.[0]?.toUpperCase() || '?'}
                               </AvatarFallback>
@@ -580,36 +669,46 @@ export default function QuestionDetailPage() {
                           </div>
 
                           {(() => {
-                            const acceptedAnswerId = question.acceptedAnswerId || null
-                            const isQuestionAuthor = isConnected &&
+                            const acceptedAnswerId =
+                              question.acceptedAnswerId || null
+                            const isQuestionAuthor =
+                              isConnected &&
                               address &&
-                              address.toLowerCase() === question.author.toLowerCase()
-                            const hasAcceptedAnswer = answers.some((a) => 
-                              a.isAccepted === true || a.id.toString() === acceptedAnswerId
+                              address.toLowerCase() ===
+                                question.author.toLowerCase()
+                            const hasAcceptedAnswer = answers.some(
+                              (a) =>
+                                a.isAccepted === true ||
+                                a.id.toString() === acceptedAnswerId
                             )
-                            const isQuestionSolved = question.status === 'solved'
-                            const isThisAnswerAccepted = ans.isAccepted === true || ans.id.toString() === acceptedAnswerId
-                            const canAccept = isQuestionAuthor && 
-                              !isThisAnswerAccepted && 
-                              !isQuestionSolved && 
+                            const isQuestionSolved =
+                              question.status === 'solved'
+                            const isThisAnswerAccepted =
+                              ans.isAccepted === true ||
+                              ans.id.toString() === acceptedAnswerId
+                            const canAccept =
+                              isQuestionAuthor &&
+                              !isThisAnswerAccepted &&
+                              !isQuestionSolved &&
                               !hasAcceptedAnswer &&
                               !acceptedAnswerId
-                            
+
                             console.log('[UI] 답변 채택 버튼 체크:', {
                               isQuestionAuthor,
                               acceptedAnswerId: acceptedAnswerId,
-                              answers: answers.map(a => ({ 
-                                id: a.id.toString(), 
+                              answers: answers.map((a) => ({
+                                id: a.id.toString(),
                                 isAccepted: a.isAccepted,
-                                matchesAcceptedId: a.id.toString() === acceptedAnswerId
+                                matchesAcceptedId:
+                                  a.id.toString() === acceptedAnswerId,
                               })),
                               hasAcceptedAnswer,
                               isQuestionSolved,
                               isThisAnswerAccepted,
                               canAccept,
-                              answerId: ans.id.toString()
+                              answerId: ans.id.toString(),
                             })
-                            
+
                             if (canAccept) {
                               return (
                                 <Button
@@ -617,19 +716,29 @@ export default function QuestionDetailPage() {
                                   onClick={() => handleAcceptAnswer(ans.id)}
                                   disabled={isLoading}
                                 >
-                                  답변 채택 ({Number(question.reward) / 1e18} WAK)
+                                  답변 채택 ({Number(question.reward) / 1e18}{' '}
+                                  WAK)
                                 </Button>
                               )
                             } else if (isThisAnswerAccepted) {
                               return (
-                                <Badge variant="default" className="bg-green-600 text-white">
+                                <Badge
+                                  variant="default"
+                                  className="bg-green-600 text-white"
+                                >
                                   <Award className="h-3 w-3 mr-1" />
                                   채택됨
                                 </Badge>
                               )
-                            } else if ((isQuestionSolved || hasAcceptedAnswer) && !isThisAnswerAccepted) {
+                            } else if (
+                              (isQuestionSolved || hasAcceptedAnswer) &&
+                              !isThisAnswerAccepted
+                            ) {
                               return (
-                                <Badge variant="outline" className="text-muted-foreground">
+                                <Badge
+                                  variant="outline"
+                                  className="text-muted-foreground"
+                                >
                                   다른 답변이 채택됨
                                 </Badge>
                               )
@@ -648,25 +757,28 @@ export default function QuestionDetailPage() {
             <Card className="p-6 shadow-sm">
               {(() => {
                 const acceptedAnswerId = question.acceptedAnswerId || null
-                const hasAcceptedAnswer = answers.some((a) => 
-                  a.isAccepted === true || a.id.toString() === acceptedAnswerId
+                const hasAcceptedAnswer = answers.some(
+                  (a) =>
+                    a.isAccepted === true ||
+                    a.id.toString() === acceptedAnswerId
                 )
                 const isQuestionSolved = question.status === 'solved'
-                const isResolved = hasAcceptedAnswer || isQuestionSolved || !!acceptedAnswerId
-                
+                const isResolved =
+                  hasAcceptedAnswer || isQuestionSolved || !!acceptedAnswerId
+
                 console.log('[UI] 답변 작성 섹션 체크:', {
                   status: question.status,
                   acceptedAnswerId: acceptedAnswerId,
-                  answers: answers.map(a => ({ 
-                    id: a.id.toString(), 
+                  answers: answers.map((a) => ({
+                    id: a.id.toString(),
                     isAccepted: a.isAccepted,
-                    matchesAcceptedId: a.id.toString() === acceptedAnswerId
+                    matchesAcceptedId: a.id.toString() === acceptedAnswerId,
                   })),
                   hasAcceptedAnswer,
                   isQuestionSolved,
-                  isResolved
+                  isResolved,
                 })
-                
+
                 if (isResolved) {
                   return (
                     <div className="text-center py-12 bg-muted/30 rounded-lg">
@@ -677,21 +789,15 @@ export default function QuestionDetailPage() {
                         </h3>
                       </div>
                       <p className="text-sm text-muted-foreground">
-                        이 질문은 이미 해결되었습니다. 새로운 답변을 작성할 수 없습니다.
+                        이 질문은 이미 해결되었습니다. 새로운 답변을 작성할 수
+                        없습니다.
                       </p>
                     </div>
                   )
                 }
-                
+
                 return (
                   <>
-                    <div className="space-y-1 mb-4">
-                      <h3 className="text-xl font-semibold">답변 작성하기</h3>
-                      <p className="text-sm text-muted-foreground">
-                        마크다운 문법을 지원합니다
-                      </p>
-                    </div>
-
                     {!isAuthenticated ? (
                       <div className="text-center py-12 bg-muted/30 rounded-lg">
                         <p className="text-sm text-muted-foreground mt-0 mb-4">
@@ -706,13 +812,15 @@ export default function QuestionDetailPage() {
                         <p className="text-sm text-muted-foreground mt-0 mb-4">
                           답변을 작성하려면 지갑을 연결해주세요.
                         </p>
-                        <Button onClick={async () => {
-                          try {
-                            await connectWallet()
-                          } catch (error) {
-                            console.error('지갑 연결 실패:', error)
-                          }
-                        }}>
+                        <Button
+                          onClick={async () => {
+                            try {
+                              await connectWallet()
+                            } catch (error) {
+                              console.error('지갑 연결 실패:', error)
+                            }
+                          }}
+                        >
                           지갑 연결하기
                         </Button>
                       </div>

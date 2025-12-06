@@ -38,7 +38,7 @@ export function WalletConnectModal() {
   const [isSignUp, setIsSignUp] = useState(false)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [signUpUserName, setSignUpUserName] = useState('') // 회원가입 시 닉네임
+  const [signUpUserName, setSignUpUserName] = useState('') // 회원가입 시 이름
   const [nameValue, setNameValue] = useState('') // 지갑 연결 후 이름 (사용 안 함)
   const [isLoading, setIsLoading] = useState(false)
   const [userWalletAddress, setUserWalletAddress] = useState<string | null>(
@@ -155,9 +155,9 @@ export function WalletConnectModal() {
       return
     }
 
-    // 회원가입 시 닉네임도 필요
+    // 회원가입 시 이름도 필요
     if (isSignUp && !signUpUserName.trim()) {
-      alert('닉네임을 입력해주세요.')
+      alert('이름을 입력해주세요.')
       return
     }
 
@@ -318,11 +318,11 @@ export function WalletConnectModal() {
               </div>
               {isSignUp && (
                 <div className="space-y-2">
-                  <Label htmlFor="signUpUserName">닉네임</Label>
+                  <Label htmlFor="signUpUserName">이름</Label>
                   <Input
                     id="signUpUserName"
                     type="text"
-                    placeholder="닉네임을 입력하세요"
+                    placeholder="이름을 입력하세요"
                     value={signUpUserName}
                     onChange={(e) => setSignUpUserName(e.target.value)}
                     onKeyDown={(e) => {

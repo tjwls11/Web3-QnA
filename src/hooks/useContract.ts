@@ -251,13 +251,14 @@ export function useContract() {
     async (questionId: bigint, answerId: bigint): Promise<boolean> => {
       setIsLoading(true)
       setError(null)
-
-      // 원래 답변 ID 저장 (MongoDB 업데이트용)
+      // 원래 답변 ID 저장 (MongoDB 업데이트용 및 온체인 ID로 사용)
       const originalAnswerId = answerId
 
       try {
         // 스마트 컨트랙트에서 답변 채택 (토큰이 자동으로 분배됨)
-        const { acceptAnswer: acceptAnswerContract, createAnswerContract } =
+        // 이미 답변 작성 시 createAnswerContract로 온체인에 등록된 답변 ID를 사용해야 하며,
+        // 채택 시점에는 그 온체인 ID를 조회해서 사용한다.
+        const { acceptAnswer: acceptAnswerContract, findOnchainAnswerId } =
           await import('@/lib/web3/contract-functions')
 
         // 먼저 MongoDB에서 답변 정보 조회
@@ -312,71 +313,32 @@ export function useContract() {
           }
         }
 
-        // 먼저 스마트 컨트랙트에 답변 등록 (없으면 등록, 있으면 에러 무시)
-        let contractAnswerId: bigint | null = null
-        try {
-          console.log('[답변 채택] 스마트 컨트랙트에 답변 등록 시도...')
-          contractAnswerId = await createAnswerContract(questionId, contentHash)
-          if (contractAnswerId !== null) {
-            console.log(
-              '[답변 채택] 스마트 컨트랙트 답변 ID:',
-              contractAnswerId.toString()
-            )
-          }
-        } catch (registerError: any) {
-          // 이미 등록되어 있거나 다른 에러인 경우
-          console.warn(
-            '[답변 채택] 스마트 컨트랙트 등록 실패 또는 이미 등록됨:',
-            registerError.message
-          )
-          // 원래 answerId 사용하여 채택 시도
-          contractAnswerId = answerId
-        }
+        // 온체인에 등록된 답변 ID를 조회
+        const contractAnswerId = await findOnchainAnswerId(
+          questionId,
+          answer.author,
+          contentHash
+        )
 
-        // 스마트 컨트랙트의 답변 ID로 채택 시도
         if (contractAnswerId === null) {
-          throw new Error('스마트 컨트랙트 답변 ID를 가져올 수 없습니다.')
+          throw new Error(
+            '이 답변은 블록체인에 등록되어 있지 않습니다. 답변 작성 시 지갑을 연결한 상태에서 작성한 답변만 토큰 보상을 받을 수 있습니다.'
+          )
         }
 
         try {
           await acceptAnswerContract(questionId, contractAnswerId)
         } catch (err: any) {
-          // "Answer not found" 에러인 경우, 답변이 스마트 컨트랙트에 없을 수 있음
+          // "Answer not found" 에러는 그대로 사용자에게 전달
           if (
             err.reason === 'Answer not found' ||
             err.message?.includes('Answer not found')
           ) {
-            console.log(
-              '[답변 채택] 답변이 스마트 컨트랙트에 없습니다. 다시 등록 시도...'
+            throw new Error(
+              '블록체인에서 해당 답변을 찾을 수 없습니다. 답변을 다시 작성하시거나, 나중에 다시 시도해주세요.'
             )
-
-            // 스마트 컨트랙트에 답변 등록 재시도
-            try {
-              contractAnswerId = await createAnswerContract(
-                questionId,
-                contentHash
-              )
-              if (contractAnswerId === null) {
-                throw new Error('스마트 컨트랙트 답변 ID를 가져올 수 없습니다.')
-              }
-              console.log(
-                '[답변 채택] 스마트 컨트랙트 답변 ID:',
-                contractAnswerId.toString()
-              )
-
-              // 스마트 컨트랙트의 답변 ID로 다시 채택 시도
-              await acceptAnswerContract(questionId, contractAnswerId)
-            } catch (retryError: any) {
-              throw new Error(
-                `답변 채택 실패: ${
-                  retryError.message ||
-                  '스마트 컨트랙트에 답변을 등록할 수 없습니다.'
-                }`
-              )
-            }
-          } else {
-            throw err
           }
+          throw err
         }
 
         // MongoDB에서도 답변 상태 업데이트 (원래 답변 ID 사용)
