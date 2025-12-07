@@ -383,7 +383,7 @@ export default function AskPage() {
                           {reward[0]} WAK
                         </p>
                         <p className="text-xs mt-1">
-                          마이페이지에서 ETH를 WAK으로 환전하세요.
+                          마이페이지에서 ETH를 WAK 토큰으로 환전하세요.
                         </p>
                       </div>
                     )}
@@ -401,9 +401,7 @@ export default function AskPage() {
                       <span>10</span>
                     </div>
                     <div className="rounded-lg border border-border bg-muted/50 p-3 text-sm">
-                      <p className="text-muted-foreground">
-                        높은 보상은 더 빠르고 질 높은 답변을 받을 수 있습니다
-                      </p>
+                      <span>WAK</span>
                     </div>
                   </CardContent>
                 </Card>
