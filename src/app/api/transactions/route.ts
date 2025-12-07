@@ -17,20 +17,16 @@ interface TransactionDocument {
 export async function GET(request: NextRequest) {
   try {
     const token = request.cookies.get('token')?.value
-    const { searchParams } = new URL(request.url)
-    const userAddress = searchParams.get('userAddress')
 
-    // 인증이 없으면 빈 배열 반환 (에러 대신)
+    // 인증이 없으면 빈 배열 반환
     if (!token) {
       return NextResponse.json({
         transactions: [],
       })
     }
 
-    // JWT 토큰 검증
     const payload = await verifyToken(token)
     if (!payload) {
-      // 토큰이 유효하지 않으면 빈 배열 반환 (에러 대신)
       return NextResponse.json({
         transactions: [],
       })
@@ -38,25 +34,37 @@ export async function GET(request: NextRequest) {
 
     const client = await clientPromise
     const db = client.db('wakqna')
-    const transactionsCollection = db.collection<TransactionDocument>('transactions')
+    const transactionsCollection =
+      db.collection<TransactionDocument>('transactions')
 
-    // 사용자 이메일로 조회
     const transactions = await transactionsCollection
       .find({ userEmail: payload.email })
       .sort({ createdAt: -1 })
       .toArray()
 
     return NextResponse.json({
-      transactions: transactions.map((t) => ({
-        type: t.type === 'exchange' ? '환전' : '출금',
-        ethAmount: t.ethAmount,
-        wakAmount: t.wakAmount,
-        transactionHash: t.transactionHash,
-        status: t.status === 'completed' ? '완료' : t.status === 'pending' ? '대기중' : '실패',
-        date: t.createdAt.toLocaleDateString('ko-KR'),
-        time: t.createdAt.toLocaleTimeString('ko-KR'),
-        createdAt: t.createdAt.getTime(),
-      })),
+      transactions: transactions.map((t) => {
+        const isExchange = t.type === 'exchange'
+        // 환전은 +, 출금은 -
+        const signedWakAmount = isExchange ? t.wakAmount : -t.wakAmount
+
+        return {
+          // 한글 라벨로 변환
+          type: isExchange ? '환전' : '출금',
+          ethAmount: t.ethAmount,
+          wakAmount: signedWakAmount,
+          transactionHash: t.transactionHash,
+          status:
+            t.status === 'completed'
+              ? '완료'
+              : t.status === 'pending'
+              ? '대기중'
+              : '실패',
+          date: t.createdAt.toLocaleDateString('ko-KR'),
+          time: t.createdAt.toLocaleTimeString('ko-KR'),
+          createdAt: t.createdAt.getTime(),
+        }
+      }),
     })
   } catch (error: any) {
     console.error('거래 내역 조회 실패:', error)
@@ -75,13 +83,9 @@ export async function POST(request: NextRequest) {
     const { type, ethAmount, wakAmount, transactionHash, userAddress } = body
 
     if (!token) {
-      return NextResponse.json(
-        { error: '인증이 필요합니다.' },
-        { status: 401 }
-      )
+      return NextResponse.json({ error: '인증이 필요합니다.' }, { status: 401 })
     }
 
-    // JWT 토큰 검증
     const payload = await verifyToken(token)
     if (!payload) {
       return NextResponse.json(
@@ -90,11 +94,7 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // 유효성 검사
-    // type: 'exchange' | 'withdraw' (문자열만 확인)
-    // ethAmount: 숫자 (0 허용, undefined/null만 오류)
-    // wakAmount: 숫자 (0 허용, undefined/null만 오류)
-    // userAddress: 필수 문자열
+    // 필수 값 확인 (0은 허용, undefined/null만 체크)
     if (
       !type ||
       ethAmount === undefined ||
@@ -111,7 +111,8 @@ export async function POST(request: NextRequest) {
 
     const client = await clientPromise
     const db = client.db('wakqna')
-    const transactionsCollection = db.collection<TransactionDocument>('transactions')
+    const transactionsCollection =
+      db.collection<TransactionDocument>('transactions')
 
     const transaction: TransactionDocument = {
       userEmail: payload.email,
@@ -126,9 +127,6 @@ export async function POST(request: NextRequest) {
 
     await transactionsCollection.insertOne(transaction)
 
-    // 토큰 잔액은 온체인 WAKVaultToken.balanceOf를 "진실"로 사용하므로
-    // 여기서는 DB tokenBalance 를 직접 + / - 하지 않는다.
-
     return NextResponse.json({ success: true })
   } catch (error: any) {
     console.error('거래 내역 추가 실패:', error)
@@ -138,7 +136,3 @@ export async function POST(request: NextRequest) {
     )
   }
 }
-
-
-
-

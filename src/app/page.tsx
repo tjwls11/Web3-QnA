@@ -21,7 +21,6 @@ import {
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useWallet } from '@/lib/wallet-context'
-import { WalletRequiredModal } from '@/components/wallet-required-modal'
 import { useContract } from '@/hooks/useContract'
 import * as storage from '@/lib/storage'
 import { useEffect } from 'react'
@@ -57,7 +56,6 @@ export default function HomePage() {
   const router = useRouter()
   const { isConnected, address } = useWallet()
   const { addBookmark, removeBookmark, isBookmarked } = useContract()
-  const [showWalletModal, setShowWalletModal] = useState(false)
   const [bookmarkedQuestions, setBookmarkedQuestions] = useState<Set<string>>(
     new Set()
   )
@@ -231,7 +229,12 @@ export default function HomePage() {
     e.stopPropagation()
 
     if (!isConnected || !address) {
-      setShowWalletModal(true)
+      // 홈에서는 로그인/지갑 연결 안내 카드 대신
+      // 헤더에서 사용하는 지갑/로그인 모달만 열어준다.
+      if (typeof window !== 'undefined') {
+        const event = new CustomEvent('openWalletModal')
+        window.dispatchEvent(event)
+      }
       return
     }
 
@@ -289,10 +292,6 @@ export default function HomePage() {
   return (
     <div className="min-h-screen flex flex-col bg-background">
       <Header />
-
-      {showWalletModal && (
-        <WalletRequiredModal onClose={() => setShowWalletModal(false)} />
-      )}
 
       <div className="flex-1">
         <div className="container mx-auto px-4 py-6 lg:px-8">

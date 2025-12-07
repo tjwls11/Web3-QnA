@@ -28,10 +28,8 @@ import {
   Coins,
   MessageSquare,
   CheckCircle2,
-  TrendingUp,
   Award,
   Calendar,
-  Eye,
   Edit,
   Heart,
   X,
@@ -49,11 +47,14 @@ import { useState, useEffect } from 'react'
 import * as storage from '@/lib/storage'
 import {
   buyTokensWithEth,
-  getExchangeRate,
   withdrawWakForEth,
 } from '@/lib/web3/contract-functions'
 import { getBrowserProvider } from '@/lib/web3/provider'
 import type { Question, Answer } from '@/lib/contracts/types'
+
+// 고정 환율: 0.01 ETH = 1 WAK → 1 ETH = 100 WAK
+const ETH_PER_WAK = 0.01
+const WAK_PER_ETH = 1 / ETH_PER_WAK // 100
 
 export default function MyPage() {
   const {
@@ -95,7 +96,10 @@ export default function MyPage() {
   const [exchangeAmount, setExchangeAmount] = useState('')
   const [exchangeError, setExchangeError] = useState('')
   const [isExchanging, setIsExchanging] = useState(false)
-  const [exchangeRate, setExchangeRate] = useState<number>(1) // 1 ETH = 1 WAK
+
+  // 1 ETH = WAK_PER_ETH WAK (고정)
+  const [exchangeRate] = useState<number>(WAK_PER_ETH)
+
   const [ethBalance, setEthBalance] = useState<number>(0)
   const [contractBalance, setContractBalance] = useState<number>(0)
   const [isCheckingContractBalance, setIsCheckingContractBalance] =
@@ -142,6 +146,7 @@ export default function MyPage() {
     }>
   >([])
   const [isLoadingReceipts, setIsLoadingReceipts] = useState(false)
+
   const totalQuestions = myQuestions.length
   const totalAnswers = myAnswers.length
   const totalAcceptedAnswers = myAnswers.filter((ans) => ans.isAccepted).length
@@ -203,18 +208,16 @@ export default function MyPage() {
         )
       }
 
-      // 서버에서 못 가져온 경우 localStorage 사용
       const savedTags = localStorage.getItem('interestTags')
       if (savedTags) {
         try {
           setInterestTags(JSON.parse(savedTags))
           return
         } catch {
-          // 파싱 실패 시 기본값 사용
+          // ignore parse error
         }
       }
 
-      // 기본값
       setInterestTags(['React', 'TypeScript', 'Next.js', 'Blockchain'])
     }
 
@@ -279,12 +282,9 @@ export default function MyPage() {
       if (cancelled) return
 
       try {
-        // 마이페이지 진입 시 토큰 잔액을 DB 기준으로 조회
         await refreshTokenBalance()
       } catch (error: any) {
         if (cancelled) return
-
-        // "signal already cancelled" 에러는 무시
         const errorMessage = error?.message || ''
         const errorCode = error?.code || ''
 
@@ -307,9 +307,9 @@ export default function MyPage() {
     }
   }, [address, refreshTokenBalance])
 
-  // ETH 잔액 및 환전 비율 조회
+  // ETH 잔액 조회 (환율은 고정)
   useEffect(() => {
-    const loadEthBalanceAndRate = async () => {
+    const loadEthBalance = async () => {
       if (!address) {
         setEthBalance(0)
         return
@@ -321,18 +321,12 @@ export default function MyPage() {
           const balance = await provider.getBalance(address)
           setEthBalance(Number(balance) / 1e18)
         }
-
-        const rate = await getExchangeRate()
-        // rate는 18자리 기준이므로 1e18로 나눠서 실제 비율 계산
-        // 예: rate = 100 * 10^18이면 1 ETH = 100 WAK
-        const rateInEth = Number(rate) / 1e18
-        setExchangeRate(rateInEth)
       } catch (error) {
         console.error('ETH 잔액 조회 실패:', error)
       }
     }
 
-    loadEthBalanceAndRate()
+    loadEthBalance()
   }, [address])
 
   // 유저의 답변 로드
@@ -403,10 +397,9 @@ export default function MyPage() {
     loadRewards()
   }, [address])
 
-  // 거래 내역 로드 (환전/출금)
+  // 거래 내역 로드
   useEffect(() => {
     const loadTransactions = async () => {
-      // 인증되지 않은 경우 거래 내역 로드하지 않음
       if (!isAuthenticated) {
         setTransactions([])
         return
@@ -416,7 +409,6 @@ export default function MyPage() {
         const transactionData = await storage.getUserTransactions()
         setTransactions(transactionData)
       } catch (error) {
-        // 에러는 조용히 처리 (이미 storage에서 빈 배열 반환)
         setTransactions([])
       }
     }
@@ -522,15 +514,11 @@ export default function MyPage() {
           setIsUpdatingAvatar(false)
           return
         }
-        // Base64로 변환하여 저장 (또는 서버에 업로드)
         finalAvatarUrl = avatarPreview
       } else {
-        // URL 입력 방식
         if (!avatarUrlInput.trim()) {
-          // URL이 비어있으면 프로필 사진 제거
           finalAvatarUrl = null
         } else {
-          // URL 유효성 검사
           try {
             new URL(avatarUrlInput.trim())
             finalAvatarUrl = avatarUrlInput.trim()
@@ -573,7 +561,6 @@ export default function MyPage() {
       const success = await deleteAccount()
       if (success) {
         alert('회원탈퇴가 완료되었습니다.')
-        // 홈페이지로 리다이렉트
         window.location.href = '/'
       }
     } catch (error) {
@@ -605,22 +592,18 @@ export default function MyPage() {
 
     setIsWithdrawing(true)
     try {
-      // WAK를 wei로 변환 (18 decimals)
       const amountInWei = BigInt(Math.floor(amount * 1e18))
 
-      // WAK → ETH 출금 컨트랙트 호출
       await withdrawWakForEth(amountInWei)
 
       alert(`${amount} WAK를 ETH로 출금했습니다.`)
       setIsWithdrawOpen(false)
       setWithdrawAmount('')
 
-      // 잔액 새로고침
       if (refreshTokenBalance) {
         await refreshTokenBalance()
       }
 
-      // 거래 내역 새로고침
       try {
         const transactionData = await storage.getUserTransactions()
         setTransactions(transactionData)
@@ -664,31 +647,25 @@ export default function MyPage() {
 
     setIsExchanging(true)
     try {
-      // ETH를 wei로 변환 (18 decimals)
       const amountInWei = BigInt(Math.floor(amount * 1e18))
 
-      // ETH를 보내서 WAK 포인트 충전 (IOU)
       await buyTokensWithEth(amountInWei)
 
-      // exchangeRate는 이미 "1 ETH = X WAK" 형태의 숫자이므로 그대로 사용
       const wakAmount = amount * exchangeRate
       alert(`${amount} ETH를 ${wakAmount.toFixed(2)} WAK로 환전했습니다!`)
       setIsExchangeOpen(false)
       setExchangeAmount('')
 
-      // 잔액 새로고침
       if (refreshTokenBalance) {
         await refreshTokenBalance()
       }
 
-      // ETH 잔액도 새로고침
       const provider = getBrowserProvider()
       if (provider) {
         const balance = await provider.getBalance(address)
         setEthBalance(Number(balance) / 1e18)
       }
 
-      // 거래 내역 새로고침
       try {
         const transactionData = await storage.getUserTransactions()
         setTransactions(transactionData)
@@ -722,7 +699,6 @@ export default function MyPage() {
     }
   }
 
-  // 날짜 포맷팅 함수
   const formatDate = (timestamp: bigint): string => {
     const date = new Date(Number(timestamp))
     const now = new Date()
@@ -842,7 +818,6 @@ export default function MyPage() {
                     <span className="text-sm text-muted-foreground">WAK</span>
                   </div>
 
-                  {/* 컨트랙트 주소에 토큰이 있는 경우 알림 */}
                   {tokenBalance === 0 && contractBalance > 0 && (
                     <div className="mb-4 rounded-lg bg-yellow-50 p-3 text-sm text-yellow-800 dark:bg-yellow-900/20 dark:text-yellow-200">
                       <p className="font-semibold mb-1">
@@ -1208,9 +1183,7 @@ export default function MyPage() {
                               className="flex items-center justify-between rounded-lg border border-border p-4"
                             >
                               <div>
-                                <p className="font-medium">
-                                  {tx.type === 'exchange' ? '환전' : '출금'}
-                                </p>
+                                <p className="font-medium">{tx.type}</p>
                                 <p className="text-sm text-muted-foreground">
                                   {tx.date} {tx.time}
                                   {tx.transactionHash &&
@@ -1222,7 +1195,7 @@ export default function MyPage() {
                               </div>
                               <div className="text-right">
                                 <p className="font-bold text-primary">
-                                  {tx.type === 'exchange' ? '+' : '-'}
+                                  {tx.wakAmount >= 0 ? '+' : ''}
                                   {tx.wakAmount.toFixed(2)} WAK
                                 </p>
                               </div>
@@ -1234,6 +1207,7 @@ export default function MyPage() {
                   </Card>
                 </TabsContent>
 
+                {/* 찜 목록 탭 */}
                 <TabsContent value="bookmarks" className="space-y-4">
                   {isLoadingBookmarks ? (
                     <div className="flex items-center justify-center py-8">
@@ -1477,6 +1451,7 @@ export default function MyPage() {
           </DialogContent>
         </Dialog>
 
+        {/* 관심 태그 관리 모달 */}
         <Dialog
           open={isTagManagementOpen}
           onOpenChange={setIsTagManagementOpen}
@@ -1638,7 +1613,7 @@ export default function MyPage() {
                   </div>
                   <div className="flex justify-between">
                     <span>최소 환전 금액:</span>
-                    <span className="font-medium">0.001 ETH</span>
+                    <span className="font-medium">0.01 ETH</span>
                   </div>
                 </div>
               </div>

@@ -10,7 +10,9 @@ const STORAGE_KEYS = {
 }
 
 // 질문 저장 (MongoDB)
-export async function saveQuestion(question: Question & { content: string }): Promise<boolean> {
+export async function saveQuestion(
+  question: Question & { content: string }
+): Promise<boolean> {
   try {
     const response = await fetch('/api/questions', {
       method: 'POST',
@@ -43,7 +45,9 @@ export async function saveQuestion(question: Question & { content: string }): Pr
 }
 
 // 질문 조회 (MongoDB) - 인증 불필요
-export async function getQuestions(): Promise<Array<Question & { content: string }>> {
+export async function getQuestions(): Promise<
+  Array<Question & { content: string }>
+> {
   try {
     const response = await fetch('/api/questions')
     if (!response.ok) {
@@ -55,7 +59,7 @@ export async function getQuestions(): Promise<Array<Question & { content: string
     if (!data.questions || !Array.isArray(data.questions)) {
       return []
     }
-    
+
     // 문자열로 받은 BigInt 값들을 BigInt로 변환
     return data.questions.map((q: any) => ({
       ...q,
@@ -71,14 +75,28 @@ export async function getQuestions(): Promise<Array<Question & { content: string
   }
 }
 
+// 거래 내역 타입
+export interface UserTransaction {
+  type: 'exchange' | 'withdraw'
+  ethAmount: number
+  wakAmount: number
+  transactionHash?: string
+  status: string
+  date: string
+  time: string
+  createdAt: number
+}
+
 // 질문 ID로 조회 (MongoDB)
 export async function getQuestionById(
   id: string | number | bigint
 ): Promise<(Question & { content: string }) | null> {
   try {
     const questionId = id.toString()
-    const response = await fetch(`/api/questions?id=${encodeURIComponent(questionId)}`)
-    
+    const response = await fetch(
+      `/api/questions?id=${encodeURIComponent(questionId)}`
+    )
+
     if (!response.ok) {
       const errorText = await response.text()
       console.error('질문 조회 실패:', {
@@ -87,37 +105,39 @@ export async function getQuestionById(
         error: errorText,
         questionId,
       })
-      
+
       // 404는 질문이 없는 것이므로 null 반환
       if (response.status === 404) {
         return null
       }
-      
-      throw new Error(`질문 조회 실패: ${response.status} ${response.statusText}`)
+
+      throw new Error(
+        `질문 조회 실패: ${response.status} ${response.statusText}`
+      )
     }
-    
+
     const data = await response.json()
     if (!data.question) {
       return null
     }
-    
+
     // 문자열로 받은 BigInt 값들을 BigInt로 변환
     const question = {
       ...data.question,
       id: BigInt(data.question.id),
       reward: BigInt(data.question.reward),
       createdAt: BigInt(data.question.createdAt),
-    answerCount: BigInt(data.question.answerCount),
-    viewCount: BigInt(data.question.viewCount || 0),
+      answerCount: BigInt(data.question.answerCount),
+      viewCount: BigInt(data.question.viewCount || 0),
       acceptedAnswerId: data.question.acceptedAnswerId || null,
     }
-    
+
     console.log('[질문 조회] 로드된 질문:', {
       id: question.id.toString(),
       status: question.status,
-      acceptedAnswerId: question.acceptedAnswerId
+      acceptedAnswerId: question.acceptedAnswerId,
     })
-    
+
     return question
   } catch (error) {
     console.error('질문 조회 실패:', error)
@@ -138,15 +158,15 @@ export async function getUserQuestions(
     if (!data.questions) {
       return []
     }
-    
+
     // 문자열로 받은 BigInt 값들을 BigInt로 변환
     return data.questions.map((q: any) => ({
       ...q,
       id: BigInt(q.id),
       reward: BigInt(q.reward),
       createdAt: BigInt(q.createdAt),
-    answerCount: BigInt(q.answerCount),
-    viewCount: BigInt(q.viewCount || 0),
+      answerCount: BigInt(q.answerCount),
+      viewCount: BigInt(q.viewCount || 0),
     }))
   } catch (error) {
     console.error('질문 조회 실패:', error)
@@ -158,7 +178,7 @@ export async function getUserQuestions(
 export function saveAnswer(answer: Answer & { content: string }): void {
   const answers = getAnswers()
   answers.push(answer)
-  
+
   // BigInt 값을 문자열로 변환하여 저장
   const serializedAnswers = answers.map((ans) => ({
     ...ans,
@@ -166,7 +186,7 @@ export function saveAnswer(answer: Answer & { content: string }): void {
     questionId: ans.questionId.toString(),
     createdAt: ans.createdAt.toString(),
   }))
-  
+
   localStorage.setItem(STORAGE_KEYS.ANSWERS, JSON.stringify(serializedAnswers))
 }
 
@@ -175,9 +195,9 @@ export function getAnswers(): Array<Answer & { content: string }> {
   if (typeof window === 'undefined') return []
   const data = localStorage.getItem(STORAGE_KEYS.ANSWERS)
   if (!data) return []
-  
+
   const parsed = JSON.parse(data)
-  
+
   // 문자열로 저장된 BigInt 값들을 다시 BigInt로 변환
   return parsed.map((ans: any) => ({
     ...ans,
@@ -194,8 +214,10 @@ export async function getAnswersByQuestionId(
   try {
     const normalizedQuestionId = questionId.toString()
     console.log('[답변 조회] 요청 questionId:', normalizedQuestionId)
-    
-    const response = await fetch(`/api/answers?questionId=${encodeURIComponent(normalizedQuestionId)}`)
+
+    const response = await fetch(
+      `/api/answers?questionId=${encodeURIComponent(normalizedQuestionId)}`
+    )
     if (!response.ok) {
       const errorText = await response.text()
       console.error('[답변 조회] API 오류:', response.status, errorText)
@@ -204,7 +226,11 @@ export async function getAnswersByQuestionId(
       const filtered = answers.filter(
         (a) => a.questionId.toString() === normalizedQuestionId
       )
-      console.log('[답변 조회] localStorage fallback 결과:', filtered.length, '개')
+      console.log(
+        '[답변 조회] localStorage fallback 결과:',
+        filtered.length,
+        '개'
+      )
       return filtered
     }
     const data = await response.json()
@@ -216,7 +242,7 @@ export async function getAnswersByQuestionId(
         author: a.author,
       })),
     })
-    
+
     if (!data.answers || !Array.isArray(data.answers)) {
       console.warn('[답변 조회] API 응답에 answers 배열이 없거나 유효하지 않음')
       // localStorage에서 조회 (fallback)
@@ -224,10 +250,14 @@ export async function getAnswersByQuestionId(
       const filtered = answers.filter(
         (a) => a.questionId.toString() === normalizedQuestionId
       )
-      console.log('[답변 조회] localStorage fallback 결과:', filtered.length, '개')
+      console.log(
+        '[답변 조회] localStorage fallback 결과:',
+        filtered.length,
+        '개'
+      )
       return filtered
     }
-    
+
     // MongoDB에서 가져온 답변 반환
     const mappedAnswers = data.answers.map((a: any) => {
       // id가 문자열인 경우 BigInt로 변환 시도
@@ -261,7 +291,7 @@ export async function getAnswersByQuestionId(
           console.warn('[답변 조회] ID 변환 실패:', a.id, e)
         }
       }
-      
+
       return {
         id: answerId,
         questionId: BigInt(a.questionId || 0),
@@ -272,7 +302,7 @@ export async function getAnswersByQuestionId(
         isAccepted: a.isAccepted || false,
       }
     })
-    
+
     console.log('[답변 조회] 최종 반환 답변 수:', mappedAnswers.length)
     return mappedAnswers
   } catch (error: any) {
@@ -282,7 +312,11 @@ export async function getAnswersByQuestionId(
     const filtered = answers.filter(
       (a) => a.questionId.toString() === questionId.toString()
     )
-    console.log('[답변 조회] localStorage fallback 결과:', filtered.length, '개')
+    console.log(
+      '[답변 조회] localStorage fallback 결과:',
+      filtered.length,
+      '개'
+    )
     return filtered
   }
 }
@@ -420,23 +454,25 @@ export async function getUserBookmarksList(
   try {
     const normalizedAddress = address.toLowerCase()
     console.log('[찜 목록] 조회 시작:', normalizedAddress)
-    
-    const response = await fetch(`/api/bookmarks?userAddress=${normalizedAddress}`)
-    
+
+    const response = await fetch(
+      `/api/bookmarks?userAddress=${normalizedAddress}`
+    )
+
     if (!response.ok) {
       const error = await response.json()
       console.error('[찜 목록] API 오류:', error)
       throw new Error(error.error || '찜 목록 조회 실패')
     }
-    
+
     const data = await response.json()
     console.log('[찜 목록] 응답 데이터:', data)
-    
+
     if (!data.questions || !Array.isArray(data.questions)) {
       console.log('[찜 목록] 질문이 없거나 배열이 아님')
       return []
     }
-    
+
     // 문자열로 받은 BigInt 값들을 BigInt로 변환
     const questions = data.questions.map((q: any) => ({
       ...q,
@@ -445,7 +481,7 @@ export async function getUserBookmarksList(
       createdAt: BigInt(q.createdAt),
       answerCount: BigInt(q.answerCount || 0),
     }))
-    
+
     console.log('[찜 목록] 변환 완료:', questions.length, '개')
     return questions
   } catch (error: any) {
@@ -488,17 +524,54 @@ export async function getUserActivities(
   }
 }
 
+// 거래 내역 저장 (환전/출금) (MongoDB) - 서버에서 현재 로그인한 사용자 이메일로 매핑 (정확하지 않음)
+export async function addUserTransaction(
+  tx: Omit<UserTransaction, 'date' | 'time' | 'createdAt'>
+): Promise<boolean> {
+  try {
+    const now = new Date()
+
+    const payload = {
+      ...tx,
+      date: now.toLocaleDateString('ko-KR'),
+      time: now.toLocaleTimeString('ko-KR', { hour12: false }),
+      createdAt: now.getTime(),
+    }
+
+    const response = await fetch('/api/transactions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    })
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}))
+      console.error('[거래 내역] 저장 실패:', response.status, errorData)
+      return false
+    }
+
+    return true
+  } catch (error) {
+    console.error('[거래 내역] 저장 실패:', error)
+    return false
+  }
+}
+
 // 거래 내역 조회 (환전/출금) (MongoDB) - email 기반
-export async function getUserTransactions(): Promise<Array<{
-  type: string
-  ethAmount: number
-  wakAmount: number
-  transactionHash?: string
-  status: string
-  date: string
-  time: string
-  createdAt: number
-}>> {
+export async function getUserTransactions(): Promise<
+  Array<{
+    type: string
+    ethAmount: number
+    wakAmount: number
+    transactionHash?: string
+    status: string
+    date: string
+    time: string
+    createdAt: number
+  }>
+> {
   try {
     const response = await fetch('/api/transactions')
     if (!response.ok) {
@@ -519,10 +592,13 @@ export async function getUserTransactions(): Promise<Array<{
 }
 
 // 사용자 등록 (MongoDB)
-export async function registerUser(address: string, userName: string): Promise<boolean> {
+export async function registerUser(
+  address: string,
+  userName: string
+): Promise<boolean> {
   try {
     console.log('[사용자 등록] 시작:', { address, userName })
-    
+
     const response = await fetch('/api/users', {
       method: 'POST',
       headers: {
@@ -536,8 +612,11 @@ export async function registerUser(address: string, userName: string): Promise<b
 
     if (!response.ok) {
       const error = await response.json()
-      console.log('[사용자 등록] API 응답 오류:', { status: response.status, error })
-      
+      console.log('[사용자 등록] API 응답 오류:', {
+        status: response.status,
+        error,
+      })
+
       if (error.error?.includes('이미 등록된')) {
         console.log('[사용자 등록] 이미 등록된 사용자 - 성공으로 처리')
         return true // 이미 등록된 경우도 성공으로 처리
@@ -555,18 +634,20 @@ export async function registerUser(address: string, userName: string): Promise<b
 }
 
 // 사용자 조회 (MongoDB)
-export async function getUsers(): Promise<Record<
-  string,
-  { address: string; userName: string; registeredAt: number }
->> {
+export async function getUsers(): Promise<
+  Record<string, { address: string; userName: string; registeredAt: number }>
+> {
   try {
     const response = await fetch('/api/users')
     if (!response.ok) {
       throw new Error('사용자 조회 실패')
     }
     const data = await response.json()
-    const users: Record<string, { address: string; userName: string; registeredAt: number }> = {}
-    
+    const users: Record<
+      string,
+      { address: string; userName: string; registeredAt: number }
+    > = {}
+
     if (data.users) {
       data.users.forEach((user: any) => {
         users[user.address] = {
@@ -576,7 +657,7 @@ export async function getUsers(): Promise<Record<
         }
       })
     }
-    
+
     return users
   } catch (error) {
     console.error('사용자 조회 실패:', error)
