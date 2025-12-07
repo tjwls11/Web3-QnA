@@ -802,11 +802,7 @@ export default function MyPage() {
                         지갑 연결하기
                       </Button>
                     )}
-                    <div className="flex flex-wrap gap-2">
-                      <Badge variant="outline">React 전문가</Badge>
-                      <Badge variant="outline">TypeScript</Badge>
-                      <Badge variant="outline">Top 10%</Badge>
-                    </div>
+                    <div className="flex flex-wrap gap-2"></div>
                   </div>
                 </div>
                 <div className="flex gap-2">
