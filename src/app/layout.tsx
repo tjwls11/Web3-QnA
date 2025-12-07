@@ -11,7 +11,7 @@ const geistMono = Geist_Mono({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
   title: 'WAK QnA',
-  description: 'Web3 기반 지식공유 및 토큰 보상 시스템',
+  description: 'Web3 QnA 플랫폼',
   generator: 'Next.js',
 }
 

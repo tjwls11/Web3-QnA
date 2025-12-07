@@ -23,49 +23,34 @@ import { NETWORK_CONFIG } from '@/lib/web3/config'
 type ModalView = 'auth' | 'wallet' | 'name'
 
 export function WalletConnectModal() {
-  const {
-    isAuthenticated,
-    isConnected,
-    userName: currentUserName,
-    isRegistered,
-    signUp,
-    signIn,
-    connectWallet,
-    registerUser,
-  } = useWallet()
+  const { signUp, signIn, connectWallet, registerUser } = useWallet()
+
   const [isOpen, setIsOpen] = useState(false)
   const [view, setView] = useState<ModalView>('auth')
   const [isSignUp, setIsSignUp] = useState(false)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [signUpUserName, setSignUpUserName] = useState('') // 회원가입 시 이름
-  const [nameValue, setNameValue] = useState('') // 지갑 연결 후 이름 (사용 안 함)
+  const [signUpUserName, setSignUpUserName] = useState('')
+  const [nameValue, setNameValue] = useState('')
   const [isLoading, setIsLoading] = useState(false)
-  const [userWalletAddress, setUserWalletAddress] = useState<string | null>(
-    null
-  )
   const [currentNetwork, setCurrentNetwork] = useState<string | null>(null)
   const [isWrongNetwork, setIsWrongNetwork] = useState(false)
 
-  // 유저의 지갑 주소 확인 및 네트워크 확인
+  // 로그인 버튼에서 쏘는 이벤트로만 모달 열기
   useEffect(() => {
-    const checkUserWallet = async () => {
-      if (!isAuthenticated) {
-        setUserWalletAddress(null)
-        return
-      }
-
-      try {
-        const response = await fetch('/api/auth/user-wallet')
-        if (response.ok) {
-          const data = await response.json()
-          setUserWalletAddress(data.walletAddress)
-        }
-      } catch (error) {
-        console.error('지갑 주소 확인 실패:', error)
-        setUserWalletAddress(null)
-      }
+    const handleOpenModal = () => {
+      setView('auth')
+      setIsSignUp(false)
+      setIsOpen(true)
     }
+
+    window.addEventListener('openWalletModal', handleOpenModal)
+    return () => window.removeEventListener('openWalletModal', handleOpenModal)
+  }, [])
+
+  // 모달이 열린 동안에만 네트워크 확인
+  useEffect(() => {
+    if (!isOpen) return
 
     const checkNetworkStatus = async () => {
       if (typeof window === 'undefined' || !window.ethereum) {
@@ -86,7 +71,6 @@ export function WalletConnectModal() {
         const chainId = Number(network.chainId)
         const isCorrect = chainId === NETWORK_CONFIG.chainId
 
-        // 네트워크 이름 매핑
         const networkNames: Record<number, string> = {
           1: 'Ethereum Mainnet',
           11155111: 'Sepolia',
@@ -104,58 +88,14 @@ export function WalletConnectModal() {
       }
     }
 
-    checkUserWallet()
     checkNetworkStatus()
-
-    // 네트워크 변경 감지
-    if (window.ethereum) {
-      const handleChainChanged = () => {
-        checkNetworkStatus()
-      }
-      window.ethereum.on('chainChanged', handleChainChanged)
-      return () => {
-        window.ethereum?.removeListener('chainChanged', handleChainChanged)
-      }
-    }
-  }, [isAuthenticated])
-
-  useEffect(() => {
-    // 인증되지 않았으면 인증 화면 표시
-    if (!isAuthenticated) {
-      setIsOpen(true)
-      setView('auth')
-      return
-    }
-
-    // 인증 완료 시 모달 닫기
-    // 지갑 연결은 선택사항이므로 자동으로 모달을 띄우지 않음
-    if (isAuthenticated) {
-      setIsOpen(false)
-    }
-  }, [isAuthenticated, isConnected, isRegistered, userWalletAddress])
-
-  // 커스텀 이벤트로 모달 열기
-  useEffect(() => {
-    const handleOpenModal = () => {
-      if (!isAuthenticated) {
-        setIsOpen(true)
-        setView('auth')
-      }
-    }
-
-    window.addEventListener('openWalletModal', handleOpenModal)
-    return () => {
-      window.removeEventListener('openWalletModal', handleOpenModal)
-    }
-  }, [isAuthenticated])
+  }, [isOpen])
 
   const handleAuth = async () => {
     if (!email.trim() || !password.trim()) {
       alert('이메일과 비밀번호를 입력해주세요.')
       return
     }
-
-    // 회원가입 시 이름도 필요
     if (isSignUp && !signUpUserName.trim()) {
       alert('이름을 입력해주세요.')
       return
@@ -171,7 +111,7 @@ export function WalletConnectModal() {
         setEmail('')
         setPassword('')
         setSignUpUserName('')
-        setIsOpen(false) // 회원가입/로그인 완료 시 모달 닫기
+        setIsOpen(false)
       }
     } catch (error) {
       console.error('인증 실패:', error)
@@ -189,14 +129,11 @@ export function WalletConnectModal() {
         return
       }
 
-      // 네트워크 확인 및 전환
       const isCorrectNetwork = await checkNetwork(provider)
       if (!isCorrectNetwork) {
         const switched = await switchNetwork(provider)
         if (!switched) {
-          alert(
-            'Sepolia 테스트넷으로 전환해주세요. MetaMask에서 네트워크 전환을 승인해주세요.'
-          )
+          alert('Sepolia 테스트넷으로 전환해주세요.')
           setIsLoading(false)
           return
         }
@@ -223,12 +160,9 @@ export function WalletConnectModal() {
         alert('MetaMask가 설치되어 있지 않습니다.')
         return
       }
-
       const switched = await switchNetwork(provider)
       if (!switched) {
-        alert(
-          '네트워크 전환에 실패했습니다. MetaMask에서 네트워크 전환을 승인해주세요.'
-        )
+        alert('네트워크 전환에 실패했습니다.')
       }
     } catch (error) {
       console.error('네트워크 전환 실패:', error)
@@ -294,11 +228,7 @@ export function WalletConnectModal() {
                   placeholder="이메일을 입력하세요"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      handleAuth()
-                    }
-                  }}
+                  onKeyDown={(e) => e.key === 'Enter' && handleAuth()}
                 />
               </div>
               <div className="space-y-2">
@@ -309,11 +239,7 @@ export function WalletConnectModal() {
                   placeholder="비밀번호를 입력하세요"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      handleAuth()
-                    }
-                  }}
+                  onKeyDown={(e) => e.key === 'Enter' && handleAuth()}
                 />
               </div>
               {isSignUp && (
@@ -325,11 +251,7 @@ export function WalletConnectModal() {
                     placeholder="이름을 입력하세요"
                     value={signUpUserName}
                     onChange={(e) => setSignUpUserName(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        handleAuth()
-                      }
-                    }}
+                    onKeyDown={(e) => e.key === 'Enter' && handleAuth()}
                   />
                 </div>
               )}
@@ -365,13 +287,10 @@ export function WalletConnectModal() {
             <DialogHeader>
               <DialogTitle>지갑 연결</DialogTitle>
               <DialogDescription>
-                서비스를 이용하려면 MetaMask 지갑을 연결해주세요.
-                <br />
-                Sepolia 테스트넷에서 사용 가능합니다.
+                MetaMask 지갑을 연결하고 Sepolia 테스트넷에서 사용해주세요.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4 py-4">
-              {/* 네트워크 상태 표시 */}
               {currentNetwork && (
                 <div
                   className={`rounded-lg border p-4 ${
@@ -406,7 +325,6 @@ export function WalletConnectModal() {
                 </div>
               )}
 
-              {/* 네트워크 전환 버튼 (잘못된 네트워크일 때만 표시) */}
               {isWrongNetwork && (
                 <Button
                   onClick={handleSwitchNetwork}
@@ -419,7 +337,6 @@ export function WalletConnectModal() {
                 </Button>
               )}
 
-              {/* 지갑 연결 버튼 */}
               <Button
                 onClick={handleConnect}
                 size="lg"
@@ -455,11 +372,7 @@ export function WalletConnectModal() {
                   placeholder="사용자 이름을 입력하세요"
                   value={nameValue}
                   onChange={(e) => setNameValue(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      handleNameSubmit()
-                    }
-                  }}
+                  onKeyDown={(e) => e.key === 'Enter' && handleNameSubmit()}
                 />
               </div>
               <Button

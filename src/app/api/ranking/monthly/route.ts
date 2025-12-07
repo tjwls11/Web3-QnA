@@ -10,8 +10,6 @@ type MonthlyRankItem = {
   rank: number
 }
 
-// 이번 달 랭킹 (해당 달 1일 00:00 ~ 다음 달 1일 00:00)
-// answers.author + answers.isAccepted 기준 집계
 export async function GET(request: NextRequest) {
   try {
     const client = await clientPromise

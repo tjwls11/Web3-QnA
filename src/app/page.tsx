@@ -72,6 +72,12 @@ export default function HomePage() {
   >({})
   const [isLoadingQuestions, setIsLoadingQuestions] = useState(true)
 
+  // 🔍 검색어
+  const [searchTerm, setSearchTerm] = useState('')
+  // 📄 페이지네이션
+  const [currentPage, setCurrentPage] = useState(1)
+  const PAGE_SIZE = 5
+
   // 질문 목록 + 작성자 정보 + 북마크 상태 로드
   useEffect(() => {
     const loadQuestions = async () => {
@@ -261,6 +267,11 @@ export default function HomePage() {
     loadProfiles()
   }, [weeklyRanking])
 
+  // 필터/태그/검색 바뀌면 1페이지로 이동
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [filter, selectedTag, searchTerm])
+
   const handleBookmark = async (
     questionId: bigint,
     e: React.MouseEvent
@@ -298,21 +309,55 @@ export default function HomePage() {
     }
   }
 
+  // 필터 + 검색 + 태그 필터까지 적용한 질문 목록
   const filteredQuestions = useMemo(() => {
-    const base =
+    // 1) 최근/미답변 필터
+    let base =
       filter === 'unanswered'
         ? questions.filter(
             (q) => q.status === 'open' && Number(q.answerCount) === 0
           )
         : questions
 
-    if (!selectedTag) return base
+    // 2) 태그 필터
+    if (selectedTag) {
+      base = base.filter((q) => {
+        const tags = Array.isArray(q.tags) ? q.tags : []
+        return tags.includes(selectedTag)
+      })
+    }
 
-    return base.filter((q) => {
-      const tags = Array.isArray(q.tags) ? q.tags : []
-      return tags.includes(selectedTag)
-    })
-  }, [filter, questions, selectedTag])
+    // 3) 검색 필터 (제목 / 내용 / 태그)
+    const term = searchTerm.trim().toLowerCase()
+    if (term) {
+      base = base.filter((q) => {
+        const title = String(q.title || '').toLowerCase()
+        const content = String(q.content || '').toLowerCase()
+        const tags = Array.isArray(q.tags) ? q.tags : []
+        const tagMatch = tags.some((tag: string) =>
+          String(tag).toLowerCase().includes(term)
+        )
+        return title.includes(term) || content.includes(term) || tagMatch
+      })
+    }
+
+    return base
+  }, [filter, questions, selectedTag, searchTerm])
+
+  // 페이지 수
+  const pageCount = useMemo(() => {
+    if (filteredQuestions.length === 0) return 1
+    return Math.ceil(filteredQuestions.length / PAGE_SIZE)
+  }, [filteredQuestions, PAGE_SIZE])
+
+  // 현재 페이지에 해당하는 질문들
+  const pagedQuestions = useMemo(() => {
+    if (filteredQuestions.length === 0) return []
+    const safePage = Math.min(currentPage, pageCount)
+    const start = (safePage - 1) * PAGE_SIZE
+    const end = start + PAGE_SIZE
+    return filteredQuestions.slice(start, end)
+  }, [filteredQuestions, currentPage, pageCount, PAGE_SIZE])
 
   // 실제 데이터 기반 인기 질문 (답변 수 기준 상위 5개)
   const popularQuestions = useMemo(() => {
@@ -413,6 +458,13 @@ export default function HomePage() {
               <Input
                 placeholder="궁금한 것을 검색해보세요"
                 className="h-12 pl-10 text-base"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    setCurrentPage(1)
+                  }
+                }}
               />
             </div>
             <div className="flex items-center justify-between gap-2">
@@ -466,7 +518,7 @@ export default function HomePage() {
                     </CardContent>
                   </Card>
                 ) : (
-                  filteredQuestions.map((question: any, index: number) => {
+                  pagedQuestions.map((question: any, index: number) => {
                     const authorLower = question.author.toLowerCase()
                     const authorInfo = questionAuthors[authorLower] || {
                       userName:
@@ -604,18 +656,23 @@ export default function HomePage() {
                 )}
               </div>
 
-              {/* 페이징 (현재는 더미) */}
-              <div className="mt-8 flex justify-center gap-2">
-                {[1, 2, 3, 4, 5].map((page) => (
-                  <Button
-                    key={page}
-                    variant={page === 1 ? 'default' : 'outline'}
-                    size="sm"
-                  >
-                    {page}
-                  </Button>
-                ))}
-              </div>
+              {/* 실제 개수 기반 페이지네이션 */}
+              {filteredQuestions.length > PAGE_SIZE && (
+                <div className="mt-8 flex justify-center gap-2">
+                  {Array.from({ length: pageCount }, (_, i) => i + 1).map(
+                    (page) => (
+                      <Button
+                        key={page}
+                        variant={page === currentPage ? 'default' : 'outline'}
+                        size="sm"
+                        onClick={() => setCurrentPage(page)}
+                      >
+                        {page}
+                      </Button>
+                    )
+                  )}
+                </div>
+              )}
             </main>
 
             {/* 오른쪽 사이드바 */}
@@ -669,8 +726,7 @@ export default function HomePage() {
                     </div>
                   ) : weeklyRanking.length === 0 ? (
                     <div className="text-sm text-muted-foreground">
-                      아직 이번 주에 기록된 답변이 없습니다. 첫 번째 답변을
-                      남겨보세요!
+                      아직 이번 주에 기록된 답변이 없습니다
                     </div>
                   ) : (
                     <div className="space-y-3">

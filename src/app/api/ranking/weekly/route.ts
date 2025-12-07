@@ -10,8 +10,6 @@ type WeeklyRankItem = {
   rank: number
 }
 
-// 이번 주 랭킹 (이번 주 월요일 00:00 ~ 다음 주 월요일 00:00)
-// answers.author + answers.isAccepted 기준 집계
 export async function GET(request: NextRequest) {
   try {
     const client = await clientPromise
@@ -21,26 +19,16 @@ export async function GET(request: NextRequest) {
     const usersCollection = db.collection('users')
 
     const now = new Date()
-
-    // 이번 주 월요일 00:00
-    const weekStart = new Date(now)
-    const day = weekStart.getDay() // 0: 일요일, 1: 월요일, ...
-    const diffToMonday = (day + 6) % 7
-    weekStart.setHours(0, 0, 0, 0)
-    weekStart.setDate(weekStart.getDate() - diffToMonday)
-
-    // 다음 주 월요일 00:00
-    const weekEnd = new Date(weekStart)
-    weekEnd.setDate(weekEnd.getDate() + 7)
+    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
 
     const ACCEPTED_BONUS = 5
 
-    // 1) 이번 주에 작성된 답변을 author 기준으로 집계
+    // 1) 최근 7일간 작성된 답변 집계
     const aggregated = await answersCollection
       .aggregate([
         {
           $match: {
-            createdAt: { $gte: weekStart, $lt: weekEnd },
+            createdAt: { $gte: sevenDaysAgo, $lt: now },
             author: { $ne: null, $exists: true },
           },
         },
@@ -64,22 +52,18 @@ export async function GET(request: NextRequest) {
 
     if (filtered.length === 0) {
       return NextResponse.json({
-        range: 'this_week',
-        start: weekStart.toISOString(),
-        end: weekEnd.toISOString(),
+        range: 'last_7_days',
+        start: sevenDaysAgo.toISOString(),
+        end: now.toISOString(),
         top: [] as WeeklyRankItem[],
       })
     }
 
-    // 2) users 컬렉션에서 닉네임 조인
     const authorAddresses = filtered.map((row: any) => String(row._id))
 
     const users = await usersCollection
       .find({ address: { $in: authorAddresses } })
-      .project({
-        address: 1,
-        userName: 1,
-      })
+      .project({ address: 1, userName: 1 })
       .toArray()
 
     const userMap = new Map<string, { userName: string }>()
@@ -89,7 +73,6 @@ export async function GET(request: NextRequest) {
       userMap.set(key, { userName: u.userName || '' })
     })
 
-    // 3) 점수 계산 + 랭킹 부여
     let results: WeeklyRankItem[] = filtered.map((row: any) => {
       const address = String(row._id)
       const key = address.toLowerCase()
@@ -130,9 +113,9 @@ export async function GET(request: NextRequest) {
     const top = results.slice(0, 50)
 
     return NextResponse.json({
-      range: 'this_week',
-      start: weekStart.toISOString(),
-      end: weekEnd.toISOString(),
+      range: 'last_7_days',
+      start: sevenDaysAgo.toISOString(),
+      end: now.toISOString(),
       top,
     })
   } catch (error: any) {

@@ -112,6 +112,17 @@ export default function TeamPage() {
               <TeamCard key={member.githubUsername} member={member} />
             ))}
           </div>
+          <br />
+          <div className="mb-10 text-center mt-10 ">
+            <h2 className="text-2xl md:text-3xl font-semibold tracking-tight">
+              시연영상
+            </h2>
+            <video
+              src="/videos/demo.mp4"
+              controls
+              className="w-full h-full max-w-4xl mx-auto object-cover mt-10"
+            />
+          </div>
         </section>
       </main>
     </>

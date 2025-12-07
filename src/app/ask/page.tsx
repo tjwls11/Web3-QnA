@@ -17,15 +17,7 @@ import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Badge } from '@/components/ui/badge'
 import { Slider } from '@/components/ui/slider'
-import {
-  X,
-  Plus,
-  HelpCircle,
-  Coins,
-  Loader2,
-  Github,
-  Link as LinkIcon,
-} from 'lucide-react'
+import { X, Plus, Coins, Loader2, Github, Link as LinkIcon } from 'lucide-react'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useRouter } from 'next/navigation'
 import { useWallet } from '@/lib/wallet-context'
