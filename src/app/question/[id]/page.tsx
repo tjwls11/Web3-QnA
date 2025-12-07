@@ -34,11 +34,22 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 
+type RelatedQuestion = {
+  id: string
+  title: string
+  answerCount: number
+  reward: number
+}
+
+type PopularTag = {
+  name: string
+  count: number
+}
+
 export default function QuestionDetailPage() {
   const params = useParams()
   const router = useRouter()
-  const { isConnected, address, userName, isAuthenticated, connectWallet } =
-    useWallet()
+  const { isConnected, address, isAuthenticated, connectWallet } = useWallet()
   const {
     getQuestion,
     createAnswer,
@@ -63,6 +74,10 @@ export default function QuestionDetailPage() {
   const [receipt, setReceipt] = useState<any | null>(null)
   const [isReceiptModalOpen, setIsReceiptModalOpen] = useState(false)
   const [isLoadingReceipt, setIsLoadingReceipt] = useState(false)
+  const [relatedQuestions, setRelatedQuestions] = useState<RelatedQuestion[]>(
+    []
+  )
+  const [popularTags, setPopularTags] = useState<PopularTag[]>([])
 
   // 질문 작성자 정보 로드 함수
   const loadQuestionAuthor = async (authorAddress: string) => {
@@ -148,6 +163,98 @@ export default function QuestionDetailPage() {
     setAnswerAuthors(authorsInfo)
   }
 
+  // 질문 삭제 (작성자 본인만)
+  const handleDeleteQuestion = async () => {
+    if (!question) return
+    if (!isAuthenticated) {
+      alert('질문을 삭제하려면 로그인이 필요합니다.')
+      return
+    }
+
+    const lowerAddr = address?.toLowerCase()
+    if (!lowerAddr || question.author.toLowerCase() !== lowerAddr) {
+      alert('본인이 작성한 질문만 삭제할 수 있습니다.')
+      return
+    }
+
+    const confirmed = window.confirm(
+      '정말 이 질문을 삭제하시겠습니까?\n삭제 후에는 되돌릴 수 없습니다.'
+    )
+    if (!confirmed) return
+
+    try {
+      const questionIdStr = question.id.toString()
+      const res = await fetch(
+        `/api/questions?id=${encodeURIComponent(questionIdStr)}`,
+        {
+          method: 'DELETE',
+        }
+      )
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => null)
+        alert(data?.error || '질문 삭제에 실패했습니다.')
+        return
+      }
+
+      alert('질문이 삭제되었습니다.')
+      router.push('/')
+    } catch (error) {
+      console.error('질문 삭제 실패:', error)
+      alert('질문 삭제 중 오류가 발생했습니다.')
+    }
+  }
+
+  // 답변 삭제 (작성자 본인만, 채택된 답변 제외)
+  const handleDeleteAnswer = async (answerId: bigint) => {
+    if (!question) return
+    if (!isAuthenticated) {
+      alert('답변을 삭제하려면 로그인이 필요합니다.')
+      return
+    }
+
+    const confirmed = window.confirm(
+      '정말 이 답변을 삭제하시겠습니까?\n삭제 후에는 되돌릴 수 없습니다.'
+    )
+    if (!confirmed) return
+
+    try {
+      const res = await fetch('/api/answers', {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          answerId: answerId.toString(),
+          questionId: question.id.toString(),
+        }),
+      })
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => null)
+        alert(data?.error || '답변 삭제에 실패했습니다.')
+        return
+      }
+
+      const answerIdStr = answerId.toString()
+      setAnswers((prev) => prev.filter((a) => a.id.toString() !== answerIdStr))
+
+      // 질문의 답변 수도 함께 감소시킴
+      setQuestion((prev: any) => {
+        if (!prev) return prev
+        const current = Number(prev.answerCount || 0)
+        const next = Math.max(0, current - 1)
+        return {
+          ...prev,
+          answerCount: BigInt(next),
+        }
+      })
+    } catch (error) {
+      console.error('답변 삭제 실패:', error)
+      alert('답변 삭제 중 오류가 발생했습니다.')
+    }
+  }
+
   // 질문 및 답변 로드
   useEffect(() => {
     const loadData = async () => {
@@ -181,7 +288,7 @@ export default function QuestionDetailPage() {
           )
           console.log('[질문 상세] 로드된 답변 수:', questionAnswers.length)
 
-          // 질문의 acceptedAnswerId 확인 (타입에 없어서 any로 캐스팅)
+          // 질문의 acceptedAnswerId 확인
           const acceptedAnswerId =
             (questionData as any).acceptedAnswerId || null
           console.log('[질문 상세] 질문 정보:', {
@@ -237,6 +344,20 @@ export default function QuestionDetailPage() {
             const bookmarked = await checkBookmarked(questionId, address)
             setIsBookmarked(bookmarked)
           }
+
+          // 조회수 증가 (MongoDB)
+          try {
+            const questionIdStringForView = questionData.id.toString()
+            await fetch('/api/questions/view', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({ id: questionIdStringForView }),
+            })
+          } catch (viewError) {
+            console.error('[질문 상세] 조회수 증가 실패:', viewError)
+          }
         }
       } catch (error) {
         console.error('데이터 로드 실패:', error)
@@ -248,24 +369,74 @@ export default function QuestionDetailPage() {
     loadData()
   }, [params?.id, address, getQuestion, checkBookmarked])
 
-  const relatedQuestions = [
-    {
-      id: 2,
-      title: 'useEffect cleanup 함수는 언제 사용하나요?',
-      answers: 5,
-      reward: 30,
-    },
-    { id: 3, title: 'React 18의 새로운 기능은?', answers: 8, reward: 100 },
-    { id: 4, title: 'useState vs useReducer 차이점', answers: 12, reward: 45 },
-  ]
+  // 태그 기반 관련 질문 로드
+  useEffect(() => {
+    if (!question || !question.tags || question.tags.length === 0) {
+      setRelatedQuestions([])
+      return
+    }
 
-  const popularTags = [
-    { name: 'React', count: 1234 },
-    { name: 'JavaScript', count: 2341 },
-    { name: 'TypeScript', count: 987 },
-    { name: 'Next.js', count: 654 },
-    { name: 'Node.js', count: 543 },
-  ]
+    const fetchRelated = async () => {
+      try {
+        const params = new URLSearchParams()
+        params.set('questionId', question.id.toString())
+        params.set('tags', question.tags.join(','))
+        params.set('limit', '3')
+
+        const res = await fetch(`/api/questions/related?${params.toString()}`)
+        if (!res.ok) {
+          console.error(
+            '[관련 질문] API 호출 실패:',
+            res.status,
+            res.statusText
+          )
+          return
+        }
+
+        const data = await res.json()
+        const list: RelatedQuestion[] = Array.isArray(data.related)
+          ? data.related
+          : []
+
+        setRelatedQuestions(list)
+      } catch (err) {
+        console.error('[관련 질문] 로드 실패:', err)
+      }
+    }
+
+    fetchRelated()
+  }, [question?.id, question?.tags?.join(',')])
+
+  // 전체 질문 기준 인기 태그 계산 (홈 화면과 동일한 방식)
+  useEffect(() => {
+    const loadPopularTags = async () => {
+      try {
+        const allQuestions = await storage.getQuestions()
+
+        const tagCount: Record<string, number> = {}
+        for (const q of allQuestions) {
+          const tags = Array.isArray(q.tags) ? q.tags : []
+          for (const rawTag of tags) {
+            const normalized = String(rawTag).trim()
+            if (!normalized) continue
+            tagCount[normalized] = (tagCount[normalized] || 0) + 1
+          }
+        }
+
+        const sortedTags: PopularTag[] = Object.entries(tagCount)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 20)
+          .map(([name, count]) => ({ name, count }))
+
+        setPopularTags(sortedTags)
+      } catch (error) {
+        console.error('[인기 태그] 로드 실패:', error)
+        setPopularTags([])
+      }
+    }
+
+    loadPopularTags()
+  }, [])
 
   const handleSubmitAnswer = async () => {
     if (!isAuthenticated) {
@@ -274,7 +445,6 @@ export default function QuestionDetailPage() {
       return
     }
     if (!isConnected || !address) {
-      // 로그인 유도 메시지
       const shouldConnect = window.confirm(
         '답변을 작성하려면 지갑을 연결해야 합니다. 지갑을 연결하시겠습니까?'
       )
@@ -298,19 +468,16 @@ export default function QuestionDetailPage() {
       const answerId = await createAnswer(questionId, answer, address)
 
       if (answerId) {
-        alert('답변이 등록되었습니다!')
+        alert('답변이 등록되었습니다.')
         setAnswer('')
 
-        // 답변 목록 새로고침 (MongoDB)
         const questionAnswers = await storage.getAnswersByQuestionId(
           question.id.toString()
         )
         setAnswers(questionAnswers)
 
-        // 답변 작성자 정보 새로고침
         await loadAnswerAuthors(questionAnswers)
 
-        // 질문의 답변 수 업데이트
         const updatedQuestion = await getQuestion(questionId)
         if (updatedQuestion) {
           setQuestion(updatedQuestion)
@@ -336,7 +503,6 @@ export default function QuestionDetailPage() {
       return
     }
 
-    // 이미 채택된 답변이 있는지 확인
     const hasAcceptedAnswer = answers.some((ans) => ans.isAccepted)
     if (hasAcceptedAnswer) {
       alert(
@@ -345,7 +511,6 @@ export default function QuestionDetailPage() {
       return
     }
 
-    // 질문이 이미 해결된 상태인지 확인
     if (question.status === 'solved') {
       alert('이 질문은 이미 해결되었습니다.')
       return
@@ -357,13 +522,11 @@ export default function QuestionDetailPage() {
       if (result?.success) {
         const rewardAmount = Number(question.reward) / 1e18
         alert(
-          `답변이 채택되었습니다! ${rewardAmount} WAK 토큰이 답변자에게 전송됩니다.`
+          `답변이 채택되었습니다. ${rewardAmount} WAK 토큰이 답변자에게 전송됩니다.`
         )
 
-        // 즉시 상태 업데이트 (UI 반영)
         setQuestion({ ...question, status: 'solved' })
 
-        // 답변 목록 새로고침 (MongoDB)
         const questionAnswers = await storage.getAnswersByQuestionId(
           question.id.toString()
         )
@@ -375,7 +538,6 @@ export default function QuestionDetailPage() {
           }))
         )
 
-        // 채택된 답변의 isAccepted를 true로 설정
         const updatedAnswers = questionAnswers.map((a) =>
           a.id.toString() === answerId.toString()
             ? { ...a, isAccepted: true }
@@ -383,15 +545,12 @@ export default function QuestionDetailPage() {
         )
         setAnswers(updatedAnswers)
 
-        // 답변 작성자 정보 새로고침
         await loadAnswerAuthors(updatedAnswers)
 
-        // 질문 상태 업데이트 (서버에서 최신 상태 가져오기)
         setTimeout(async () => {
           const updatedQuestion = await getQuestion(questionId)
           if (updatedQuestion) {
             setQuestion(updatedQuestion)
-            // 답변 목록도 다시 로드
             const freshAnswers = await storage.getAnswersByQuestionId(
               question.id.toString()
             )
@@ -400,7 +559,6 @@ export default function QuestionDetailPage() {
           }
         }, 500)
 
-        // 4단계: txHash 기반 영수증 조회 및 화면에 보이기
         try {
           if (result.txHash) {
             const res = await fetch(
@@ -435,11 +593,8 @@ export default function QuestionDetailPage() {
       }
     } catch (error: any) {
       console.error('답변 채택 실패:', error)
-      // "Already resolved" 에러는 이미 사전 체크했으므로 다른 에러만 표시
       if (error.message?.includes('이미 해결되었습니다')) {
-        // 질문 상태를 업데이트하여 UI 반영
         setQuestion({ ...question, status: 'solved' })
-        // 답변 목록 새로고침
         const questionAnswers = await storage.getAnswersByQuestionId(
           question.id.toString()
         )
@@ -693,6 +848,18 @@ export default function QuestionDetailPage() {
                     <Coins className="h-4 w-4" />
                     {Number(question.reward) / 1e18} WAK
                   </div>
+                  {isAuthenticated &&
+                    address &&
+                    address.toLowerCase() === question.author.toLowerCase() && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="ml-2 text-destructive border-destructive/40 hover:bg-destructive hover:text-destructive-foreground"
+                        onClick={handleDeleteQuestion}
+                      >
+                        질문 삭제
+                      </Button>
+                    )}
                 </div>
               </div>
             </Card>
@@ -720,7 +887,6 @@ export default function QuestionDetailPage() {
                     const isThisAnswerAccepted =
                       ans.isAccepted === true ||
                       ans.id.toString() === acceptedAnswerId
-                    // 고유한 key 생성: id + questionId + index 조합
                     const uniqueKey = `${ans.id.toString()}_${ans.questionId.toString()}_${index}`
                     return (
                       <Card key={uniqueKey} className="p-6 shadow-sm">
@@ -788,6 +954,11 @@ export default function QuestionDetailPage() {
                               !hasAcceptedAnswer &&
                               !acceptedAnswerId
 
+                            const isAnswerAuthor =
+                              isConnected &&
+                              address &&
+                              address.toLowerCase() === ans.author.toLowerCase()
+
                             console.log('[UI] 답변 채택 버튼 체크:', {
                               isQuestionAuthor,
                               acceptedAnswerId: acceptedAnswerId,
@@ -804,41 +975,51 @@ export default function QuestionDetailPage() {
                               answerId: ans.id.toString(),
                             })
 
-                            if (canAccept) {
-                              return (
-                                <Button
-                                  size="sm"
-                                  onClick={() => handleAcceptAnswer(ans.id)}
-                                  disabled={isLoading}
-                                >
-                                  답변 채택 ({Number(question.reward) / 1e18}{' '}
-                                  WAK)
-                                </Button>
-                              )
-                            } else if (isThisAnswerAccepted) {
-                              return (
-                                <Badge
-                                  variant="default"
-                                  className="bg-green-600 text-white"
-                                >
-                                  <Award className="h-3 w-3 mr-1" />
-                                  채택됨
-                                </Badge>
-                              )
-                            } else if (
-                              (isQuestionSolved || hasAcceptedAnswer) &&
-                              !isThisAnswerAccepted
-                            ) {
-                              return (
-                                <Badge
-                                  variant="outline"
-                                  className="text-muted-foreground"
-                                >
-                                  다른 답변이 채택됨
-                                </Badge>
-                              )
-                            }
-                            return null
+                            return (
+                              <div className="flex items-center gap-2">
+                                {canAccept && (
+                                  <Button
+                                    size="sm"
+                                    onClick={() => handleAcceptAnswer(ans.id)}
+                                    disabled={isLoading}
+                                  >
+                                    답변 채택 ({Number(question.reward) / 1e18}{' '}
+                                    WAK)
+                                  </Button>
+                                )}
+                                {!canAccept &&
+                                  isThisAnswerAccepted &&
+                                  !isQuestionSolved && (
+                                    <Badge
+                                      variant="default"
+                                      className="bg-green-600 text-white"
+                                    >
+                                      <Award className="h-3 w-3 mr-1" />
+                                      채택됨
+                                    </Badge>
+                                  )}
+                                {!canAccept &&
+                                  !isThisAnswerAccepted &&
+                                  (isQuestionSolved || hasAcceptedAnswer) && (
+                                    <Badge
+                                      variant="outline"
+                                      className="text-muted-foreground"
+                                    >
+                                      다른 답변이 채택됨
+                                    </Badge>
+                                  )}
+                                {isAnswerAuthor && !isThisAnswerAccepted && (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="text-destructive border-destructive/40 hover:bg-destructive hover:text-destructive-foreground"
+                                    onClick={() => handleDeleteAnswer(ans.id)}
+                                  >
+                                    삭제
+                                  </Button>
+                                )}
+                              </div>
+                            )
                           })()}
                         </div>
                       </Card>
@@ -960,29 +1141,36 @@ export default function QuestionDetailPage() {
                   <TrendingUp className="h-5 w-5 text-primary" />
                   <h3 className="font-semibold">관련 질문</h3>
                 </div>
-                <div className="space-y-3">
-                  {relatedQuestions.map((q) => (
-                    <Link
-                      key={q.id}
-                      href={`/question/${q.id}`}
-                      className="block p-3 rounded-lg hover:bg-muted/50 transition-colors"
-                    >
-                      <p className="text-sm font-medium mb-2 line-clamp-2">
-                        {q.title}
-                      </p>
-                      <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                        <span className="flex items-center gap-1">
-                          <MessageSquare className="h-3 w-3" />
-                          {q.answers}
-                        </span>
-                        <span className="flex items-center gap-1 text-primary">
-                          <Coins className="h-3 w-3" />
-                          {q.reward}
-                        </span>
-                      </div>
-                    </Link>
-                  ))}
-                </div>
+
+                {relatedQuestions.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">
+                    아직 표시할 관련 질문이 없습니다.
+                  </p>
+                ) : (
+                  <div className="space-y-3">
+                    {relatedQuestions.map((q) => (
+                      <Link
+                        key={q.id}
+                        href={`/question/${q.id}`}
+                        className="block p-3 rounded-lg hover:bg-muted/50 transition-colors"
+                      >
+                        <p className="text-sm font-medium mb-2 line-clamp-2">
+                          {q.title}
+                        </p>
+                        <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                          <span className="flex items-center gap-1">
+                            <MessageSquare className="h-3 w-3" />
+                            {q.answerCount}
+                          </span>
+                          <span className="flex items-center gap-1 text-primary">
+                            <Coins className="h-3 w-3" />
+                            {Number(q.reward) / 1e18} WAK
+                          </span>
+                        </div>
+                      </Link>
+                    ))}
+                  </div>
+                )}
               </Card>
 
               {/* 인기 태그 */}
@@ -992,27 +1180,30 @@ export default function QuestionDetailPage() {
                   <h3 className="font-semibold">인기 태그</h3>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  {popularTags.map((tag) => (
-                    <Badge
-                      key={tag.name}
-                      variant="secondary"
-                      className="cursor-pointer hover:bg-primary hover:text-primary-foreground transition-colors"
-                    >
-                      {tag.name}
-                      <span className="ml-1 text-xs opacity-60">
-                        {tag.count}
-                      </span>
-                    </Badge>
-                  ))}
+                  {popularTags.length === 0 ? (
+                    <span className="text-xs text-muted-foreground">
+                      아직 인기 태그가 없습니다.
+                    </span>
+                  ) : (
+                    popularTags.map((tag) => (
+                      <Badge
+                        key={tag.name}
+                        variant="secondary"
+                        className="cursor-pointer hover:bg-primary hover:text-primary-foreground transition-colors"
+                      >
+                        {tag.name}
+                        <span className="ml-1 text-xs opacity-60">
+                          {tag.count}
+                        </span>
+                      </Badge>
+                    ))
+                  )}
                 </div>
               </Card>
 
               {/* 질문하기 CTA */}
               <Card className="p-6 shadow-sm shrink-0 from-primary/5 to-primary/10">
                 <h3 className="font-semibold mb-2">질문이 있으신가요?</h3>
-                <p className="text-sm text-muted-foreground mb-4">
-                  전문가들에게 질문하고 실질적인 보상을 받으세요.
-                </p>
                 <Button className="w-full" asChild>
                   <Link href="/ask">질문하기</Link>
                 </Button>
@@ -1022,7 +1213,7 @@ export default function QuestionDetailPage() {
         </div>
       </div>
 
-      {/* 🔽🔽 추가: 영수증 모달 UI */}
+      {/* 영수증 모달 UI */}
       <Dialog open={isReceiptModalOpen} onOpenChange={setIsReceiptModalOpen}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
@@ -1088,7 +1279,6 @@ export default function QuestionDetailPage() {
                 </div>
               )}
 
-              {/* 원본 JSON 디버깅용 */}
               <details className="mt-3 rounded border px-3 py-2 text-xs">
                 <summary className="cursor-pointer text-muted-foreground">
                   원본 JSON 보기

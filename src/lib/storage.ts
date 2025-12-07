@@ -63,6 +63,7 @@ export async function getQuestions(): Promise<Array<Question & { content: string
       reward: BigInt(q.reward || 0),
       createdAt: BigInt(q.createdAt),
       answerCount: BigInt(q.answerCount || 0),
+      viewCount: BigInt(q.viewCount || 0),
     }))
   } catch (error: any) {
     console.error('[질문 조회] 실패:', error)
@@ -106,7 +107,8 @@ export async function getQuestionById(
       id: BigInt(data.question.id),
       reward: BigInt(data.question.reward),
       createdAt: BigInt(data.question.createdAt),
-      answerCount: BigInt(data.question.answerCount),
+    answerCount: BigInt(data.question.answerCount),
+    viewCount: BigInt(data.question.viewCount || 0),
       acceptedAnswerId: data.question.acceptedAnswerId || null,
     }
     
@@ -143,7 +145,8 @@ export async function getUserQuestions(
       id: BigInt(q.id),
       reward: BigInt(q.reward),
       createdAt: BigInt(q.createdAt),
-      answerCount: BigInt(q.answerCount),
+    answerCount: BigInt(q.answerCount),
+    viewCount: BigInt(q.viewCount || 0),
     }))
   } catch (error) {
     console.error('질문 조회 실패:', error)

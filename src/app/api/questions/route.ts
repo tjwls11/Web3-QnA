@@ -15,6 +15,7 @@ interface QuestionDocument extends Document {
   status?: string
   answerCount?: number
   acceptedAnswerId?: string
+  viewCount?: number
 }
 
 // 질문 등록
@@ -106,8 +107,9 @@ export async function POST(request: NextRequest) {
       reward: reward ? Number(reward) : 0, // wei 단위로 저장 (1 WAK = 1e18 wei)
       tags: tags || [],
       createdAt: createdAt ? new Date(Number(createdAt)) : new Date(),
-      status: status || 'open',
-      answerCount: 0,
+    status: status || 'open',
+    answerCount: 0,
+    viewCount: 0,
       githubUrl: githubUrl || '',
     }
     
@@ -267,6 +269,7 @@ export async function GET(request: NextRequest) {
             answerCount: actualAnswerCount.toString(), // 실제 답변 수 사용
             githubUrl: question.githubUrl || '',
             acceptedAnswerId: acceptedAnswerId,
+            viewCount: (question.viewCount || 0).toString(),
           },
         })
       } catch (queryError: any) {
@@ -296,6 +299,7 @@ export async function GET(request: NextRequest) {
           status: q.status || 'open',
           answerCount: (q.answerCount || 0).toString(),
           githubUrl: q.githubUrl || '',
+          viewCount: (q.viewCount || 0).toString(),
         })),
       })
     } else {
@@ -334,6 +338,7 @@ export async function GET(request: NextRequest) {
             status: q.status || 'open',
             answerCount: actualAnswerCount.toString(), // 실제 답변 수 사용
             githubUrl: q.githubUrl || '',
+            viewCount: (q.viewCount || 0).toString(),
           }
         })
       )
@@ -393,3 +398,134 @@ export async function PUT(request: NextRequest) {
     )
   }
 }
+
+// 질문 삭제 (작성자 본인만, 채택된 답변이 없는 경우에만 허용)
+export async function DELETE(request: NextRequest) {
+  try {
+    const { searchParams } = new URL(request.url)
+    const id = searchParams.get('id')
+
+    if (!id) {
+      return NextResponse.json(
+        { error: '질문 ID가 필요합니다.' },
+        { status: 400 }
+      )
+    }
+
+    const token = request.cookies.get('token')?.value
+    if (!token) {
+      return NextResponse.json(
+        { error: '인증이 필요합니다.' },
+        { status: 401 }
+      )
+    }
+
+    const payload = await verifyToken(token)
+    if (!payload) {
+      return NextResponse.json(
+        { error: '토큰이 만료되었거나 유효하지 않습니다.' },
+        { status: 401 }
+      )
+    }
+
+    const client = await clientPromise
+    const db = client.db('wakqna')
+    const questionsCollection = db.collection('questions')
+    const answersCollection = db.collection('answers')
+    const usersCollection = db.collection('users')
+    const authUsersCollection = db.collection('authUsers')
+
+    const questionId = id.toString()
+
+    const question = await questionsCollection.findOne({ id: questionId })
+    if (!question) {
+      return NextResponse.json(
+        { error: '질문을 찾을 수 없습니다.' },
+        { status: 404 }
+      )
+    }
+
+    // 로그인한 사용자의 지갑 주소 확인
+    const authUser = await authUsersCollection.findOne({
+      email: payload.email,
+    })
+
+    const walletAddress = authUser?.walletAddress?.toLowerCase()
+    if (!walletAddress) {
+      return NextResponse.json(
+        { error: '지갑 정보가 없어 질문을 삭제할 수 없습니다.' },
+        { status: 403 }
+      )
+    }
+
+    if ((question.author || '').toLowerCase() !== walletAddress) {
+      return NextResponse.json(
+        { error: '본인이 작성한 질문만 삭제할 수 있습니다.' },
+        { status: 403 }
+      )
+    }
+
+    // 채택된 답변이 있는 질문은 삭제 불가
+    if (
+      question.status === 'solved' ||
+      (question.acceptedAnswerId && question.acceptedAnswerId !== '')
+    ) {
+      return NextResponse.json(
+        { error: '채택된 답변이 있는 질문은 삭제할 수 없습니다.' },
+        { status: 400 }
+      )
+    }
+
+    // 이 질문에 달린 모든 답변 조회 (작성자별 answerCount 감소용)
+    const answers = await answersCollection
+      .find({ questionId: questionId })
+      .toArray()
+
+    const answerCountByAuthor: Record<string, number> = {}
+    for (const ans of answers) {
+      const author = (ans.author || '').toLowerCase()
+      if (!author) continue
+      answerCountByAuthor[author] = (answerCountByAuthor[author] || 0) + 1
+    }
+
+    // 질문 삭제
+    await questionsCollection.deleteOne({ _id: (question as any)._id })
+
+    // 관련 답변 모두 삭제
+    if (answers.length > 0) {
+      await answersCollection.deleteMany({ questionId: questionId })
+    }
+
+    // 질문 수 감소
+    await usersCollection.updateOne(
+      { address: walletAddress },
+      { $inc: { questionCount: -1 } }
+    )
+
+    await authUsersCollection.updateOne(
+      { email: payload.email },
+      { $inc: { questionCount: -1 } }
+    )
+
+    // 답변 작성자들의 답변 수 감소
+    for (const [author, count] of Object.entries(answerCountByAuthor)) {
+      await usersCollection.updateOne(
+        { address: author },
+        { $inc: { answerCount: -count } }
+      )
+      await authUsersCollection.updateOne(
+        { walletAddress: author },
+        { $inc: { answerCount: -count } }
+      )
+    }
+
+    return NextResponse.json({ success: true })
+  } catch (error: any) {
+    console.error('질문 삭제 실패:', error)
+    return NextResponse.json(
+      { error: '질문 삭제에 실패했습니다.' },
+      { status: 500 }
+    )
+  }
+}
+

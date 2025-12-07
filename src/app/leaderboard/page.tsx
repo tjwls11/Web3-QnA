@@ -2,14 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { Header } from '@/components/header'
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { Trophy, TrendingUp, Coins, Award, Crown } from 'lucide-react'
@@ -23,19 +16,16 @@ type RankItem = {
   rank: number
 }
 
-type TabValue = 'overall' | 'month' | 'week'
-
-type RankingResponse = {
-  top: RankItem[]
+type RankProfile = {
+  userName: string
+  avatarUrl: string | null
 }
 
 export default function LeaderboardPage() {
-  const [activeTab, setActiveTab] = useState<TabValue>('overall')
-  const [overallRanking, setOverallRanking] = useState<RankItem[]>([])
   const [monthlyRanking, setMonthlyRanking] = useState<RankItem[]>([])
-  const [weeklyRanking, setWeeklyRanking] = useState<RankItem[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [profiles, setProfiles] = useState<Record<string, RankProfile>>({})
 
   useEffect(() => {
     const loadRankings = async () => {
@@ -43,32 +33,19 @@ export default function LeaderboardPage() {
         setLoading(true)
         setError(null)
 
-        const [overallRes, monthlyRes, weeklyRes] = await Promise.all([
-          fetch('/api/ranking/overall'),
-          fetch('/api/ranking/monthly'),
-          fetch('/api/ranking/weekly'),
-        ])
+        const monthlyRes = await fetch('/api/ranking/monthly')
 
-        if (!overallRes.ok || !monthlyRes.ok || !weeklyRes.ok) {
+        if (!monthlyRes.ok) {
           console.error('[리더보드] 랭킹 API 오류:', {
-            overall: overallRes.status,
             monthly: monthlyRes.status,
-            weekly: weeklyRes.status,
           })
           setError('랭킹 데이터를 불러오지 못했습니다.')
           return
         }
 
-        const [overallData, monthlyData, weeklyData]: RankingResponse[] =
-          await Promise.all([
-            overallRes.json(),
-            monthlyRes.json(),
-            weeklyRes.json(),
-          ])
+        const monthlyData = await monthlyRes.json()
 
-        setOverallRanking(overallData.top || [])
         setMonthlyRanking(monthlyData.top || [])
-        setWeeklyRanking(weeklyData.top || [])
       } catch (err) {
         console.error('[리더보드] 랭킹 조회 실패:', err)
         setError('랭킹 데이터를 불러오지 못했습니다.')
@@ -80,85 +57,90 @@ export default function LeaderboardPage() {
     loadRankings()
   }, [])
 
-  const currentRanking = useMemo(() => {
-    switch (activeTab) {
-      case 'month':
-        return monthlyRanking
-      case 'week':
-        return weeklyRanking
-      default:
-        return overallRanking
+  // 각 랭킹 유저의 프로필 정보(닉네임/아바타) 로드
+  useEffect(() => {
+    const loadProfiles = async () => {
+      const all = [...monthlyRanking]
+      if (all.length === 0) {
+        setProfiles({})
+        return
+      }
+
+      const uniqueAddresses = Array.from(
+        new Set(all.map((u) => u.address.toLowerCase()))
+      )
+
+      const next: Record<string, RankProfile> = {}
+
+      await Promise.all(
+        uniqueAddresses.map(async (addr) => {
+          try {
+            const res = await fetch(
+              `/api/users/by-wallet?walletAddress=${encodeURIComponent(addr)}`
+            )
+            if (!res.ok) return
+            const data = await res.json()
+            if (data.user) {
+              next[addr] = {
+                userName: data.user.userName || '',
+                avatarUrl: data.user.avatarUrl || null,
+              }
+            }
+          } catch (e) {
+            console.warn('[리더보드] 프로필 조회 실패:', addr, e)
+          }
+        })
+      )
+
+      setProfiles(next)
     }
-  }, [activeTab, overallRanking, monthlyRanking, weeklyRanking])
 
+    loadProfiles()
+  }, [monthlyRanking])
+
+  const currentRanking = useMemo(() => monthlyRanking, [monthlyRanking])
   const topUsers = currentRanking.slice(0, 3)
-  const restUsers = currentRanking.slice(3)
 
-  const titleByTab: Record<TabValue, string> = {
-    overall: '리더보드',
-    month: '이달의 리더보드',
-    week: '이번 주 리더보드',
-  }
-
-  const listTitleByTab: Record<TabValue, string> = {
-    overall: '전체 랭킹',
-    month: '이번 달 랭킹',
-    week: '이번 주 랭킹',
-  }
-
-  const listDescriptionByTab: Record<TabValue, string> = {
-    overall: '전체 기간 기준 상위 100명',
-    month: '이번 달 기준 상위 100명',
-    week: '최근 7일 기준 상위 100명',
-  }
+  const title = '이달의 리더보드'
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="bg-background">
       <Header />
 
-      <div className="container mx-auto px-4 py-8 lg:px-8">
-        <div className="mb-8 text-center">
-          <div className="mb-4 flex justify-center">
+      <div className="container mx-auto px-4 py-6 lg:px-8">
+        <div className="mb-20 text-center">
+          <div className="mb-3 flex justify-center">
             <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary">
               <Trophy className="h-8 w-8 text-primary-foreground" />
             </div>
           </div>
-          <h1 className="mb-2 text-4xl font-bold">{titleByTab[activeTab]}</h1>
+          <h1 className="mb-1 text-4xl font-bold ">{title}</h1>
         </div>
 
-        <Tabs
-          defaultValue="overall"
-          value={activeTab}
-          onValueChange={(value) => setActiveTab(value as TabValue)}
-          className="mb-8"
-        >
-          <TabsList className="grid w-full max-w-md mx-auto grid-cols-3">
-            <TabsTrigger value="overall">전체</TabsTrigger>
-            <TabsTrigger value="month">이번 달</TabsTrigger>
-            <TabsTrigger value="week">이번 주</TabsTrigger>
-          </TabsList>
-        </Tabs>
-
         {loading ? (
-          <div className="text-center text-sm text-muted-foreground py-12">
+          <div className="py-8 text-center text-sm text-muted-foreground">
             랭킹 데이터를 불러오는 중입니다...
           </div>
         ) : error ? (
-          <div className="text-center text-sm text-destructive py-12">
+          <div className="py-8 text-center text-sm text-destructive">
             {error}
           </div>
         ) : currentRanking.length === 0 ? (
-          <div className="text-center text-sm text-muted-foreground py-12">
-            아직 표시할 랭킹 데이터가 없습니다. 첫 번째 답변을 남겨보세요!
+          <div className="py-8 text-center text-sm text-muted-foreground">
+            아직 표시할 랭킹 데이터가 없습니다
           </div>
         ) : (
           <>
-            {/* Top 3 특별 표시 */}
-            <div className="mb-12 grid gap-6 md:grid-cols-3">
+            <div className="mb-6 grid gap-6 md:grid-cols-3">
               {topUsers.map((user) => {
+                const profile = profiles[user.address.toLowerCase()]
+
                 const displayName =
+                  profile?.userName?.trim() ||
                   user.userName ||
                   `${user.address.slice(0, 6)}...${user.address.slice(-4)}`
+
+                const avatarSrc = profile?.avatarUrl || undefined
 
                 return (
                   <Card
@@ -178,7 +160,7 @@ export default function LeaderboardPage() {
                       <div className="mb-4 flex justify-center">
                         <div className="relative">
                           <Avatar className="h-20 w-20 border-4 border-background">
-                            <AvatarImage src={undefined} />
+                            <AvatarImage src={avatarSrc} />
                             <AvatarFallback>
                               {displayName[0]?.toUpperCase() || '?'}
                             </AvatarFallback>
@@ -246,80 +228,6 @@ export default function LeaderboardPage() {
                 )
               })}
             </div>
-
-            {/* 전체 랭킹 테이블 */}
-            <Card>
-              <CardHeader>
-                <CardTitle>{listTitleByTab[activeTab]}</CardTitle>
-                <CardDescription>
-                  {listDescriptionByTab[activeTab]}
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-2">
-                  {restUsers.map((user) => {
-                    const displayName =
-                      user.userName ||
-                      `${user.address.slice(0, 6)}...${user.address.slice(-4)}`
-
-                    return (
-                      <div
-                        key={user.rank}
-                        className="flex items-center justify-between rounded-lg border border-border p-4 transition-colors hover:bg-muted/50"
-                      >
-                        <div className="flex items-center gap-4">
-                          <div className="flex w-8 items-center justify-center">
-                            <span className="text-lg font-bold text-muted-foreground">
-                              #{user.rank}
-                            </span>
-                          </div>
-                          <Avatar className="h-10 w-10">
-                            <AvatarImage src={undefined} />
-                            <AvatarFallback>
-                              {displayName[0]?.toUpperCase() || '?'}
-                            </AvatarFallback>
-                          </Avatar>
-                          <div>
-                            <p className="font-semibold">{displayName}</p>
-                            <p className="text-sm text-muted-foreground">
-                              답변 {user.answersCount}개 · 채택{' '}
-                              {user.acceptedCount}개
-                            </p>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-8 text-sm">
-                          <div className="text-center">
-                            <p className="font-bold text-primary">
-                              {user.score.toLocaleString()}
-                            </p>
-                            <p className="text-xs text-muted-foreground">
-                              점수
-                            </p>
-                          </div>
-                          <div className="text-center">
-                            <p className="font-semibold">
-                              {user.answersCount}
-                            </p>
-                            <p className="text-xs text-muted-foreground">
-                              답변
-                            </p>
-                          </div>
-                          <div className="text-center">
-                            <p className="font-semibold">
-                              {user.acceptedCount}
-                            </p>
-                            <p className="text-xs text-muted-foreground">
-                              채택
-                            </p>
-                          </div>
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
-              </CardContent>
-            </Card>
           </>
         )}
       </div>

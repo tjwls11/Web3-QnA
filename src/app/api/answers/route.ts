@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import clientPromise from '@/lib/mongodb'
 import type { Answer } from '@/lib/contracts/types'
+import { verifyToken } from '@/lib/jwt'
 
 interface AnswerDocument {
   id: string
@@ -388,7 +389,6 @@ export async function GET(request: NextRequest) {
     )
   }
 }
-
 // 답변 채택 또는 업데이트
 export async function PUT(request: NextRequest) {
   try {
@@ -498,13 +498,11 @@ export async function PUT(request: NextRequest) {
       )
     }
 
-    // reward는 wei 단위로 저장되어 있을 수 있으므로 확인 후 변환
+    // reward는 wei / WAK 혼용 가능
     let rewardAmount = 0
     if (question.reward) {
       const rewardValue = Number(question.reward)
 
-      // reward가 1e18 이상이면 wei 단위로 간주하고 WAK으로 변환
-      // 1 WAK = 1e18 wei이므로, 1보다 크면 wei 단위로 간주
       if (rewardValue >= 1e18) {
         rewardAmount = rewardValue / 1e18
         console.log(
@@ -515,7 +513,6 @@ export async function PUT(request: NextRequest) {
           'WAK'
         )
       } else {
-        // 이미 WAK 단위로 저장된 경우
         rewardAmount = rewardValue
         console.log('[답변 채택] reward가 이미 WAK 단위:', rewardAmount, 'WAK')
       }
@@ -528,7 +525,7 @@ export async function PUT(request: NextRequest) {
       ')'
     )
 
-    // 질문 상태를 'solved'로 변경하고 채택된 답변 ID 저장
+    // 질문 상태를 solved로 변경 + 채택된 답변 ID 저장
     const questionUpdateResult = await questionsCollection.updateOne(
       { id: questionId.toString() },
       {
@@ -555,14 +552,6 @@ export async function PUT(request: NextRequest) {
       acceptedAnswerId: updatedQuestion?.acceptedAnswerId,
     })
 
-    // 답변자에게 토큰 지급 (반드시 실행)
-    console.log('[답변 채택] 토큰 지급 체크:', {
-      rewardAmount,
-      hasUpdatedAnswer: !!updatedAnswer,
-      updatedAnswerAuthor: updatedAnswer?.author,
-      willProceed: rewardAmount > 0 && !!updatedAnswer,
-    })
-
     if (!updatedAnswer) {
       console.error(
         '[답변 채택] 업데이트된 답변을 찾을 수 없습니다. answerId:',
@@ -574,14 +563,37 @@ export async function PUT(request: NextRequest) {
       )
     }
 
+    // ★ 여기부터 수정: 채택 수 증가와 토큰 지급을 분리
+
+    const answerAuthor = updatedAnswer.author.toLowerCase()
+    console.log('[답변 채택] 답변자 지갑 주소:', answerAuthor)
+
+    const authUsersCollection = db.collection('authUsers')
+    const usersCollection = db.collection('users')
+
+    // 1) acceptedAnswerCount는 보상 여부와 무관하게 항상 +1
+    await authUsersCollection.updateOne(
+      { walletAddress: answerAuthor },
+      { $inc: { acceptedAnswerCount: 1 } }
+    )
+
+    await usersCollection.updateOne(
+      { address: answerAuthor },
+      {
+        $setOnInsert: {
+          userName: '',
+          registeredAt: new Date(),
+          questionCount: 0,
+          answerCount: 0,
+          reputation: 0,
+        },
+        $inc: { acceptedAnswerCount: 1 },
+      },
+      { upsert: true }
+    )
+
+    // 2) rewardAmount > 0인 경우에만 토큰 잔액 지급
     if (rewardAmount > 0) {
-      const answerAuthor = updatedAnswer.author.toLowerCase()
-      console.log('[답변 채택] 답변자 지갑 주소:', answerAuthor)
-
-      const authUsersCollection = db.collection('authUsers')
-      const usersCollection = db.collection('users')
-
-      // 답변자가 authUsers에 있는지 확인 (DB 기준 내부 포인트 잔액 사용)
       const answerer = await authUsersCollection.findOne({
         walletAddress: answerAuthor,
       })
@@ -601,11 +613,10 @@ export async function PUT(request: NextRequest) {
           { walletAddress: answerAuthor },
           {
             $set: { tokenBalance: finalBalance },
-            $inc: { acceptedAnswerCount: 1 },
           }
         )
 
-        console.log('[답변 채택] 답변자 토큰 잔액/채택 수 업데이트:', {
+        console.log('[답변 채택] 답변자 토큰 잔액 업데이트:', {
           답변자: answerAuthor,
           이전DB잔액: existingBalance,
           최종잔액: finalBalance,
@@ -615,13 +626,6 @@ export async function PUT(request: NextRequest) {
             modifiedCount: updateResult.modifiedCount,
           },
         })
-
-        // users 컬렉션의 acceptedAnswerCount도 증가
-        await usersCollection.updateOne(
-          { address: answerAuthor },
-          { $inc: { acceptedAnswerCount: 1 } },
-          { upsert: true }
-        )
       } else {
         console.warn(
           '[답변 채택] 답변자를 authUsers에서 찾을 수 없습니다 (DB 포인트 기준):',

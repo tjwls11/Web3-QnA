@@ -9,7 +9,7 @@ export function Footer() {
       <div className="max-w-6xl mx-auto sm:px-3 lg:px-8 py-6 flex flex-col items-center justify-center">
         <div className="flex gap-6 mb-3">
           <Link
-            href="/github"
+            href="https://github.com/tjwls11/Web3-QnA"
             className="hover:text-gray-100 inline-flex items-center gap-2 text-base"
           >
             <Github className="h-5 w-5" />
@@ -35,4 +35,3 @@ export function Footer() {
     </footer>
   )
 }
-

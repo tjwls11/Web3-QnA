@@ -35,6 +35,11 @@ type WeeklyRankItem = {
   rank: number
 }
 
+type RankProfile = {
+  userName: string
+  avatarUrl: string | null
+}
+
 // 시간 경과 계산 함수
 function getTimeAgo(timestamp: number): string {
   const now = Date.now()
@@ -57,6 +62,7 @@ export default function HomePage() {
     new Set()
   )
   const [filter, setFilter] = useState<'latest' | 'unanswered'>('latest')
+  const [selectedTag, setSelectedTag] = useState<string | null>(null)
   const [questions, setQuestions] = useState<any[]>([])
   const [questionAuthors, setQuestionAuthors] = useState<
     Record<string, { userName: string; avatarUrl: string | null }>
@@ -64,6 +70,9 @@ export default function HomePage() {
   const [weeklyRanking, setWeeklyRanking] = useState<WeeklyRankItem[]>([])
   const [weeklyRankingLoading, setWeeklyRankingLoading] = useState(true)
   const [popularTags, setPopularTags] = useState<string[]>([])
+  const [weeklyProfiles, setWeeklyProfiles] = useState<
+    Record<string, RankProfile>
+  >({})
 
   // 질문 목록 로드
   useEffect(() => {
@@ -161,12 +170,14 @@ export default function HomePage() {
         const response = await fetch('/api/ranking/weekly')
         if (!response.ok) {
           console.error('[주간 랭킹] API 오류:', response.status)
+          setWeeklyRanking([])
           return
         }
         const data = await response.json()
         setWeeklyRanking(data.top || [])
       } catch (error) {
         console.error('[주간 랭킹] 조회 실패:', error)
+        setWeeklyRanking([])
       } finally {
         setWeeklyRankingLoading(false)
       }
@@ -174,6 +185,46 @@ export default function HomePage() {
 
     loadWeeklyRanking()
   }, [])
+
+  // 주간 랭킹 유저 프로필 로드 (닉네임/아바타)
+  useEffect(() => {
+    const loadProfiles = async () => {
+      if (!weeklyRanking || weeklyRanking.length === 0) {
+        setWeeklyProfiles({})
+        return
+      }
+
+      const uniqueAddresses = Array.from(
+        new Set(weeklyRanking.map((u) => u.address.toLowerCase()))
+      )
+
+      const nextProfiles: Record<string, RankProfile> = {}
+
+      await Promise.all(
+        uniqueAddresses.map(async (addr) => {
+          try {
+            const res = await fetch(
+              `/api/users/by-wallet?walletAddress=${encodeURIComponent(addr)}`
+            )
+            if (!res.ok) return
+            const data = await res.json()
+            if (data.user) {
+              nextProfiles[addr] = {
+                userName: data.user.userName || '',
+                avatarUrl: data.user.avatarUrl || null,
+              }
+            }
+          } catch (e) {
+            console.warn('[주간 랭킹] 프로필 조회 실패:', addr, e)
+          }
+        })
+      )
+
+      setWeeklyProfiles(nextProfiles)
+    }
+
+    loadProfiles()
+  }, [weeklyRanking])
 
   const handleBookmark = async (questionId: bigint, e: React.MouseEvent) => {
     e.preventDefault()
@@ -206,14 +257,23 @@ export default function HomePage() {
     }
   }
 
-  const filteredQuestions =
-    filter === 'unanswered'
-      ? questions.filter(
-          (q) => q.status === 'open' && Number(q.answerCount) === 0
-        )
-      : questions
+  const filteredQuestions = useMemo(() => {
+    const base =
+      filter === 'unanswered'
+        ? questions.filter(
+            (q) => q.status === 'open' && Number(q.answerCount) === 0
+          )
+        : questions
 
-  // 실제 데이터 기반 인기 질문 (답변 수 기준 상위 10개)
+    if (!selectedTag) return base
+
+    return base.filter((q) => {
+      const tags = Array.isArray(q.tags) ? q.tags : []
+      return tags.includes(selectedTag)
+    })
+  }, [filter, questions, selectedTag])
+
+  // 실제 데이터 기반 인기 질문 (조회수/답변 수 기준 상위 5개)
   const popularQuestions = useMemo(() => {
     if (!questions || questions.length === 0) return []
 
@@ -223,7 +283,7 @@ export default function HomePage() {
       (a, b) => Number(b.answerCount || 0) - Number(a.answerCount || 0)
     )
 
-    return sorted.slice(0, 10)
+    return sorted.slice(0, 5)
   }, [questions])
 
   return (
@@ -252,6 +312,7 @@ export default function HomePage() {
                 <div className="flex gap-4 overflow-x-auto pb-4 snap-x snap-mandatory scrollbar-hide">
                   {popularQuestions.map((question: any) => {
                     const answerCount = Number(question.answerCount || 0)
+                    const viewCount = Number(question.viewCount || 0)
                     const questionIdStr = question.id.toString()
 
                     return (
@@ -269,6 +330,10 @@ export default function HomePage() {
                               <span className="flex items-center gap-1">
                                 <MessageSquare className="h-3 w-3" />
                                 {answerCount}
+                              </span>
+                              <span className="flex items-center gap-1">
+                                <Eye className="h-3 w-3" />
+                                {viewCount}
                               </span>
                             </div>
                             <div className="flex items-center justify-between">
@@ -310,22 +375,37 @@ export default function HomePage() {
                 className="h-12 pl-10 text-base"
               />
             </div>
-
-            <div className="flex gap-2">
-              <Button
-                variant={filter === 'latest' ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => setFilter('latest')}
-              >
-                최근순
-              </Button>
-              <Button
-                variant={filter === 'unanswered' ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => setFilter('unanswered')}
-              >
-                미답변
-              </Button>
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex gap-2">
+                <Button
+                  variant={filter === 'latest' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setFilter('latest')}
+                >
+                  최근순
+                </Button>
+                <Button
+                  variant={filter === 'unanswered' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setFilter('unanswered')}
+                >
+                  미답변
+                </Button>
+              </div>
+              {selectedTag && (
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="text-muted-foreground">태그 필터:</span>
+                  <Badge variant="secondary">#{selectedTag}</Badge>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 px-2 text-[11px]"
+                    onClick={() => setSelectedTag(null)}
+                  >
+                    필터 해제
+                  </Button>
+                </div>
+              )}
             </div>
           </div>
 
@@ -445,15 +525,27 @@ export default function HomePage() {
                                     </>
                                   )}
                                   <div className="flex gap-1 ml-auto">
-                                    {question.tags.map((tag: string) => (
-                                      <Badge
-                                        key={tag}
-                                        variant="secondary"
-                                        className="text-xs px-2 py-0"
-                                      >
-                                        {tag}
-                                      </Badge>
-                                    ))}
+                                    {question.tags.map((tag: string) => {
+                                      const isActive = selectedTag === tag
+                                      return (
+                                        <Badge
+                                          key={tag}
+                                          variant={
+                                            isActive ? 'default' : 'secondary'
+                                          }
+                                          className="text-xs px-2 py-0 cursor-pointer hover:bg-primary hover:text-primary-foreground transition-colors"
+                                          onClick={(e) => {
+                                            e.preventDefault()
+                                            e.stopPropagation()
+                                            setSelectedTag((prev) =>
+                                              prev === tag ? null : tag
+                                            )
+                                          }}
+                                        >
+                                          {tag}
+                                        </Badge>
+                                      )
+                                    })}
                                   </div>
                                 </div>
                               </div>
@@ -493,15 +585,23 @@ export default function HomePage() {
                       아직 인기 태그가 없습니다. 첫 번째 질문을 남겨보세요!
                     </div>
                   ) : (
-                    popularTags.map((tag) => (
-                      <Badge
-                        key={tag}
-                        variant="outline"
-                        className="mr-2 cursor-pointer hover:bg-primary hover:text-primary-foreground transition-colors"
-                      >
-                        #{tag}
-                      </Badge>
-                    ))
+                    popularTags.map((tag) => {
+                      const isActive = selectedTag === tag
+                      return (
+                        <Badge
+                          key={tag}
+                          variant={isActive ? 'default' : 'outline'}
+                          className="mr-2 cursor-pointer hover:bg-primary hover:text-primary-foreground transition-colors"
+                          onClick={() =>
+                            setSelectedTag((prev) =>
+                              prev === tag ? null : tag
+                            )
+                          }
+                        >
+                          #{tag}
+                        </Badge>
+                      )
+                    })
                   )}
                 </CardContent>
               </Card>
@@ -525,11 +625,17 @@ export default function HomePage() {
                   ) : (
                     <div className="space-y-3">
                       {weeklyRanking.slice(0, 5).map((user) => {
+                        const profile =
+                          weeklyProfiles[user.address.toLowerCase()]
+
                         const displayName =
+                          profile?.userName?.trim() ||
                           user.userName ||
                           `${user.address.slice(0, 6)}...${user.address.slice(
                             -4
                           )}`
+
+                        const avatarSrc = profile?.avatarUrl || undefined
 
                         return (
                           <div
@@ -547,7 +653,7 @@ export default function HomePage() {
                                 {user.rank}
                               </span>
                               <Avatar className="h-8 w-8">
-                                <AvatarImage src={undefined} />
+                                <AvatarImage src={avatarSrc} />
                                 <AvatarFallback>
                                   {displayName[0]?.toUpperCase() || '?'}
                                 </AvatarFallback>
