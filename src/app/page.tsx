@@ -2,9 +2,8 @@
 
 import type React from 'react'
 
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useEffect } from 'react'
 import { Header } from '@/components/header'
-import { Footer } from '@/components/footer'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -23,7 +22,6 @@ import { useRouter } from 'next/navigation'
 import { useWallet } from '@/lib/wallet-context'
 import { useContract } from '@/hooks/useContract'
 import * as storage from '@/lib/storage'
-import { useEffect } from 'react'
 
 type WeeklyRankItem = {
   address: string
@@ -56,6 +54,7 @@ export default function HomePage() {
   const router = useRouter()
   const { isConnected, address } = useWallet()
   const { addBookmark, removeBookmark, isBookmarked } = useContract()
+
   const [bookmarkedQuestions, setBookmarkedQuestions] = useState<Set<string>>(
     new Set()
   )
@@ -71,97 +70,135 @@ export default function HomePage() {
   const [weeklyProfiles, setWeeklyProfiles] = useState<
     Record<string, RankProfile>
   >({})
+  const [isLoadingQuestions, setIsLoadingQuestions] = useState(true)
 
-  // 질문 목록 로드
+  // 질문 목록 + 작성자 정보 + 북마크 상태 로드
   useEffect(() => {
     const loadQuestions = async () => {
-      const allQuestions = await storage.getQuestions()
-      // 최신순으로 정렬
-      const sortedQuestions = allQuestions.sort((a, b) => {
-        return Number(b.createdAt) - Number(a.createdAt)
-      })
+      setIsLoadingQuestions(true)
+      try {
+        const allQuestions = await storage.getQuestions()
 
-      // 찜하기 상태 확인
-      if (address) {
-        const bookmarked = new Set<string>()
-        for (const q of sortedQuestions) {
-          const isBooked = await isBookmarked(q.id, address)
-          if (isBooked) {
-            bookmarked.add(q.id.toString())
-          }
-        }
-        setBookmarkedQuestions(bookmarked)
-      }
+        // 최신순 정렬
+        const sortedQuestions = allQuestions.sort(
+          (a: any, b: any) => Number(b.createdAt) - Number(a.createdAt)
+        )
 
-      // 질문 작성자 정보 로드
-      const authorsInfo: Record<
-        string,
-        { userName: string; avatarUrl: string | null }
-      > = {}
-      await Promise.all(
-        sortedQuestions.map(async (q) => {
-          try {
-            const response = await fetch(
-              `/api/users/by-wallet?walletAddress=${encodeURIComponent(
-                q.author
-              )}`
-            )
-            if (response.ok) {
-              const data = await response.json()
-              if (data.user) {
-                authorsInfo[q.author.toLowerCase()] = {
+        // 작성자 주소 dedup 후 프로필 조회
+        const authorsInfo: Record<
+          string,
+          { userName: string; avatarUrl: string | null }
+        > = {}
+
+        const uniqueAuthors = Array.from(
+          new Set(
+            sortedQuestions
+              .map((q: any) => q.author)
+              .filter(Boolean)
+              .map((addr: string) => addr.toLowerCase())
+          )
+        )
+
+        await Promise.all(
+          uniqueAuthors.map(async (authorLower) => {
+            try {
+              const res = await fetch(
+                `/api/users/by-wallet?walletAddress=${encodeURIComponent(
+                  authorLower
+                )}`
+              )
+
+              if (!res.ok) {
+                authorsInfo[authorLower] = {
                   userName:
-                    data.user.userName ||
-                    q.author.slice(0, 6) + '...' + q.author.slice(-4),
-                  avatarUrl: data.user.avatarUrl || null,
-                }
-              } else {
-                authorsInfo[q.author.toLowerCase()] = {
-                  userName: q.author.slice(0, 6) + '...' + q.author.slice(-4),
+                    authorLower.slice(0, 6) + '...' + authorLower.slice(-4),
                   avatarUrl: null,
                 }
+                return
               }
-            } else {
-              authorsInfo[q.author.toLowerCase()] = {
-                userName: q.author.slice(0, 6) + '...' + q.author.slice(-4),
+
+              const data = await res.json()
+              const user = data.user
+
+              authorsInfo[authorLower] = {
+                userName:
+                  user?.userName ??
+                  authorLower.slice(0, 6) + '...' + authorLower.slice(-4),
+                avatarUrl: user?.avatarUrl ?? null,
+              }
+            } catch (error) {
+              console.error('작성자 정보 로드 실패:', authorLower, error)
+              authorsInfo[authorLower] = {
+                userName:
+                  authorLower.slice(0, 6) + '...' + authorLower.slice(-4),
                 avatarUrl: null,
               }
             }
-          } catch (error) {
-            console.error('작성자 정보 로드 실패:', error)
-            authorsInfo[q.author.toLowerCase()] = {
-              userName: q.author.slice(0, 6) + '...' + q.author.slice(-4),
-              avatarUrl: null,
-            }
+          })
+        )
+
+        setQuestionAuthors(authorsInfo)
+        setQuestions(sortedQuestions)
+
+        // 북마크 상태 병렬 조회
+        if (address) {
+          try {
+            const results = await Promise.all(
+              sortedQuestions.map((q: any) =>
+                isBookmarked(q.id, address).catch((err: any) => {
+                  console.error('isBookmarked 에러:', q.id, err)
+                  return false
+                })
+              )
+            )
+
+            const bookmarked = new Set<string>()
+            results.forEach((isBooked, idx) => {
+              if (isBooked) {
+                bookmarked.add(sortedQuestions[idx].id.toString())
+              }
+            })
+
+            setBookmarkedQuestions(bookmarked)
+          } catch (err) {
+            console.error('북마크 상태 조회 실패:', err)
           }
-        })
-      )
-      setQuestionAuthors(authorsInfo)
-      setQuestions(sortedQuestions)
-
-      // 인기 태그 계산 (최근 질문 기준)
-      const tagCount: Record<string, number> = {}
-      for (const q of sortedQuestions) {
-        const tags = Array.isArray(q.tags) ? q.tags : []
-        for (const rawTag of tags) {
-          const normalized = String(rawTag).trim()
-          if (!normalized) continue
-          tagCount[normalized] = (tagCount[normalized] || 0) + 1
+        } else {
+          setBookmarkedQuestions(new Set())
         }
+
+        // 인기 태그 계산
+        const tagCount: Record<string, number> = {}
+        for (const q of sortedQuestions) {
+          const tags = Array.isArray(q.tags) ? q.tags : []
+          for (const rawTag of tags) {
+            const normalized = String(rawTag).trim()
+            if (!normalized) continue
+            tagCount[normalized] = (tagCount[normalized] || 0) + 1
+          }
+        }
+
+        const sortedTags = Object.entries(tagCount)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 20)
+          .map(([tag]) => tag)
+
+        setPopularTags(sortedTags)
+      } catch (error) {
+        console.error('질문 목록 로드 실패:', error)
+        setQuestions([])
+        setQuestionAuthors({})
+        setPopularTags([])
+        setBookmarkedQuestions(new Set())
+      } finally {
+        setIsLoadingQuestions(false)
       }
-
-      const sortedTags = Object.entries(tagCount)
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 20)
-        .map(([tag]) => tag)
-
-      setPopularTags(sortedTags)
     }
 
     loadQuestions()
   }, [address, isBookmarked])
 
-  // 이번 주 랭킹 로드 (최근 7일 기준)
+  // 이번 주 랭킹 로드
   useEffect(() => {
     const loadWeeklyRanking = async () => {
       try {
@@ -184,7 +221,7 @@ export default function HomePage() {
     loadWeeklyRanking()
   }, [])
 
-  // 주간 랭킹 유저 프로필 로드 (닉네임/아바타)
+  // 주간 랭킹 유저 프로필 로드
   useEffect(() => {
     const loadProfiles = async () => {
       if (!weeklyRanking || weeklyRanking.length === 0) {
@@ -224,13 +261,14 @@ export default function HomePage() {
     loadProfiles()
   }, [weeklyRanking])
 
-  const handleBookmark = async (questionId: bigint, e: React.MouseEvent) => {
+  const handleBookmark = async (
+    questionId: bigint,
+    e: React.MouseEvent
+  ): Promise<void> => {
     e.preventDefault()
     e.stopPropagation()
 
     if (!isConnected || !address) {
-      // 홈에서는 로그인/지갑 연결 안내 카드 대신
-      // 헤더에서 사용하는 지갑/로그인 모달만 열어준다.
       if (typeof window !== 'undefined') {
         const event = new CustomEvent('openWalletModal')
         window.dispatchEvent(event)
@@ -276,7 +314,7 @@ export default function HomePage() {
     })
   }, [filter, questions, selectedTag])
 
-  // 실제 데이터 기반 인기 질문 (조회수/답변 수 기준 상위 5개)
+  // 실제 데이터 기반 인기 질문 (답변 수 기준 상위 5개)
   const popularQuestions = useMemo(() => {
     if (!questions || questions.length === 0) return []
 
@@ -295,6 +333,7 @@ export default function HomePage() {
 
       <div className="flex-1">
         <div className="container mx-auto px-4 py-6 lg:px-8">
+          {/* 많이 본 Q&A 섹션 */}
           <div className="mb-6">
             <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
               <TrendingUp className="h-5 w-5 text-primary" />
@@ -313,6 +352,9 @@ export default function HomePage() {
                     const answerCount = Number(question.answerCount || 0)
                     const viewCount = Number(question.viewCount || 0)
                     const questionIdStr = question.id.toString()
+                    const tags = Array.isArray(question.tags)
+                      ? question.tags
+                      : []
 
                     return (
                       <Link
@@ -337,17 +379,15 @@ export default function HomePage() {
                             </div>
                             <div className="flex items-center justify-between">
                               <div className="flex gap-1">
-                                {(question.tags || [])
-                                  .slice(0, 2)
-                                  .map((tag: string) => (
-                                    <Badge
-                                      key={tag}
-                                      variant="secondary"
-                                      className="text-xs px-2 py-0"
-                                    >
-                                      {tag}
-                                    </Badge>
-                                  ))}
+                                {tags.slice(0, 2).map((tag: string) => (
+                                  <Badge
+                                    key={tag}
+                                    variant="secondary"
+                                    className="text-xs px-2 py-0"
+                                  >
+                                    {tag}
+                                  </Badge>
+                                ))}
                               </div>
                               <div className="flex items-center gap-1 text-primary font-bold">
                                 <Coins className="h-4 w-4" />
@@ -366,6 +406,7 @@ export default function HomePage() {
             </div>
           </div>
 
+          {/* 검색 / 필터 */}
           <div className="mb-6">
             <div className="relative mb-4">
               <Search className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-muted-foreground" />
@@ -409,31 +450,37 @@ export default function HomePage() {
           </div>
 
           <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
+            {/* 메인 질문 리스트 */}
             <main>
               <div className="space-y-4">
-                {filteredQuestions.length === 0 ? (
+                {isLoadingQuestions ? (
                   <Card>
                     <CardContent className="p-8 text-center text-muted-foreground">
-                      질문이 없습니다.
+                      질문을 불러오는 중입니다...
+                    </CardContent>
+                  </Card>
+                ) : filteredQuestions.length === 0 ? (
+                  <Card>
+                    <CardContent className="p-8 text-center text-muted-foreground">
+                      아직 등록된 질문이 없습니다.
                     </CardContent>
                   </Card>
                 ) : (
-                  filteredQuestions.map((question, index) => {
-                    const authorInfo = questionAuthors[
-                      question.author.toLowerCase()
-                    ] || {
+                  filteredQuestions.map((question: any, index: number) => {
+                    const authorLower = question.author.toLowerCase()
+                    const authorInfo = questionAuthors[authorLower] || {
                       userName:
-                        question.author.slice(0, 6) +
-                        '...' +
-                        question.author.slice(-4),
+                        authorLower.slice(0, 6) + '...' + authorLower.slice(-4),
                       avatarUrl: null,
                     }
+
                     const questionIdStr = question.id.toString()
                     const isBooked = bookmarkedQuestions.has(questionIdStr)
                     const timeAgo = getTimeAgo(Number(question.createdAt))
-
-                    // DB에서 실제 답변 수 가져오기 (question.answerCount 사용)
                     const answerCount = Number(question.answerCount) || 0
+                    const tags = Array.isArray(question.tags)
+                      ? question.tags
+                      : []
 
                     return (
                       <Link
@@ -524,7 +571,7 @@ export default function HomePage() {
                                     </>
                                   )}
                                   <div className="flex gap-1 ml-auto">
-                                    {question.tags.map((tag: string) => {
+                                    {tags.map((tag: string) => {
                                       const isActive = selectedTag === tag
                                       return (
                                         <Badge
@@ -557,6 +604,7 @@ export default function HomePage() {
                 )}
               </div>
 
+              {/* 페이징 (현재는 더미) */}
               <div className="mt-8 flex justify-center gap-2">
                 {[1, 2, 3, 4, 5].map((page) => (
                   <Button
@@ -570,7 +618,9 @@ export default function HomePage() {
               </div>
             </main>
 
+            {/* 오른쪽 사이드바 */}
             <aside className="space-y-4 lg:sticky lg:top-20 lg:self-start hidden lg:block">
+              {/* 인기 태그 */}
               <Card>
                 <CardHeader className="pb-3">
                   <CardTitle className="text-base font-bold flex items-center gap-2">
@@ -605,6 +655,7 @@ export default function HomePage() {
                 </CardContent>
               </Card>
 
+              {/* 이번 주 순위 */}
               <Card>
                 <CardHeader className="pb-3">
                   <CardTitle className="text-base font-bold">

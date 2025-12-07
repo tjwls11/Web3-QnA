@@ -21,12 +21,6 @@ export function Footer() {
           >
             Team
           </Link>
-          <Link
-            href="/wak"
-            className="hover:text-gray-100 inline-flex items-center gap-2 text-base"
-          >
-            Wak
-          </Link>
         </div>
         <p className="text-sm text-gray-300">
           © 2025 WAK QnA. All rights reserved.

@@ -46,6 +46,15 @@ type PopularTag = {
   count: number
 }
 
+type AnswerReply = {
+  id: string
+  answerId: string
+  questionId: string
+  content: string
+  author: string
+  createdAt: number | string | bigint
+}
+
 export default function QuestionDetailPage() {
   const params = useParams()
   const router = useRouter()
@@ -78,6 +87,17 @@ export default function QuestionDetailPage() {
     []
   )
   const [popularTags, setPopularTags] = useState<PopularTag[]>([])
+
+  // 답변별 대댓글 목록
+  const [answerReplies, setAnswerReplies] = useState<
+    Record<string, AnswerReply[]>
+  >({})
+
+  // 각 답변별 대댓글 입력값
+  const [replyInputs, setReplyInputs] = useState<Record<string, string>>({})
+
+  // 각 답변별 대댓글 등록 로딩 상태
+  const [replyLoading, setReplyLoading] = useState<Record<string, boolean>>({})
 
   // 질문 작성자 정보 로드 함수
   const loadQuestionAuthor = async (authorAddress: string) => {
@@ -163,6 +183,41 @@ export default function QuestionDetailPage() {
     setAnswerAuthors(authorsInfo)
   }
 
+  // 답변별 대댓글 로드 함수
+  const loadAnswerReplies = async (questionId: string, answersList: any[]) => {
+    try {
+      if (!answersList.length) {
+        setAnswerReplies({})
+        return
+      }
+
+      const res = await fetch(
+        `/api/replies?questionId=${encodeURIComponent(questionId)}`
+      )
+
+      if (!res.ok) {
+        console.warn('[대댓글] 조회 실패:', res.status, res.statusText)
+        return
+      }
+
+      const data = await res.json()
+      const list: AnswerReply[] = Array.isArray(data.replies)
+        ? data.replies
+        : []
+
+      const grouped: Record<string, AnswerReply[]> = {}
+      for (const r of list) {
+        const key = r.answerId.toString()
+        if (!grouped[key]) grouped[key] = []
+        grouped[key].push(r)
+      }
+
+      setAnswerReplies(grouped)
+    } catch (error) {
+      console.error('[대댓글] 로드 실패:', error)
+    }
+  }
+
   // 질문 삭제 (작성자 본인만)
   const handleDeleteQuestion = async () => {
     if (!question) return
@@ -239,7 +294,6 @@ export default function QuestionDetailPage() {
       const answerIdStr = answerId.toString()
       setAnswers((prev) => prev.filter((a) => a.id.toString() !== answerIdStr))
 
-      // 질문의 답변 수도 함께 감소시킴
       setQuestion((prev: any) => {
         if (!prev) return prev
         const current = Number(prev.answerCount || 0)
@@ -252,6 +306,73 @@ export default function QuestionDetailPage() {
     } catch (error) {
       console.error('답변 삭제 실패:', error)
       alert('답변 삭제 중 오류가 발생했습니다.')
+    }
+  }
+
+  // 대댓글 등록
+  const handleSubmitReply = async (answerId: string) => {
+    if (!isAuthenticated) {
+      alert('대댓글을 작성하려면 로그인이 필요합니다.')
+      router.push('/')
+      return
+    }
+    if (!isConnected || !address) {
+      const shouldConnect = window.confirm(
+        '대댓글을 작성하려면 지갑을 연결해야 합니다. 지갑을 연결하시겠습니까?'
+      )
+      if (shouldConnect) {
+        try {
+          await connectWallet()
+        } catch (error) {
+          console.error('지갑 연결 실패:', error)
+        }
+      }
+      return
+    }
+    if (!question) return
+
+    const replyText = replyInputs[answerId]?.trim()
+    if (!replyText) {
+      alert('대댓글 내용을 입력해주세요.')
+      return
+    }
+
+    try {
+      setReplyLoading((prev) => ({ ...prev, [answerId]: true }))
+
+      const body = {
+        questionId: question.id.toString(),
+        answerId,
+        content: replyText,
+        author: address,
+      }
+
+      const res = await fetch('/api/replies', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => null)
+        alert(data?.error || '대댓글 등록에 실패했습니다.')
+        return
+      }
+
+      const data = await res.json()
+      const saved: AnswerReply = data.reply
+
+      setReplyInputs((prev) => ({ ...prev, [answerId]: '' }))
+      setAnswerReplies((prev) => {
+        const key = answerId
+        const list = prev[key] || []
+        return { ...prev, [key]: [...list, saved] }
+      })
+    } catch (error) {
+      console.error('[대댓글] 작성 실패:', error)
+      alert('대댓글 작성 중 오류가 발생했습니다.')
+    } finally {
+      setReplyLoading((prev) => ({ ...prev, [answerId]: false }))
     }
   }
 
@@ -279,7 +400,6 @@ export default function QuestionDetailPage() {
           )
           console.log('[질문 상세] 질문 status:', questionData.status)
 
-          // 답변 로드 (MongoDB) - 질문 ID를 문자열로 전달
           const questionIdString = questionData.id.toString()
           console.log('[질문 상세] 답변 조회할 questionId:', questionIdString)
 
@@ -288,7 +408,6 @@ export default function QuestionDetailPage() {
           )
           console.log('[질문 상세] 로드된 답변 수:', questionAnswers.length)
 
-          // 질문의 acceptedAnswerId 확인
           const acceptedAnswerId =
             (questionData as any).acceptedAnswerId || null
           console.log('[질문 상세] 질문 정보:', {
@@ -297,7 +416,6 @@ export default function QuestionDetailPage() {
             acceptedAnswerId: acceptedAnswerId,
           })
 
-          // 답변 상세 로그
           questionAnswers.forEach((a, index) => {
             const isAccepted =
               a.isAccepted === true || a.id.toString() === acceptedAnswerId
@@ -314,7 +432,6 @@ export default function QuestionDetailPage() {
           )
           console.log('[질문 상세] 채택된 답변 있음:', hasAcceptedAnswer)
 
-          // 채택된 답변이 있거나 질문에 acceptedAnswerId가 있으면 상태를 solved로 설정
           if (
             (hasAcceptedAnswer || acceptedAnswerId) &&
             questionData.status !== 'solved'
@@ -332,6 +449,9 @@ export default function QuestionDetailPage() {
           }
 
           setAnswers(questionAnswers)
+
+          // 대댓글 로드
+          await loadAnswerReplies(questionIdString, questionAnswers)
 
           // 질문 작성자 정보 로드
           await loadQuestionAuthor(questionData.author)
@@ -407,7 +527,7 @@ export default function QuestionDetailPage() {
     fetchRelated()
   }, [question?.id, question?.tags?.join(',')])
 
-  // 전체 질문 기준 인기 태그 계산 (홈 화면과 동일한 방식)
+  // 전체 질문 기준 인기 태그 계산
   useEffect(() => {
     const loadPopularTags = async () => {
       try {
@@ -475,6 +595,9 @@ export default function QuestionDetailPage() {
           question.id.toString()
         )
         setAnswers(questionAnswers)
+
+        // 대댓글 초기화 (새 답변에는 기본적으로 없음)
+        await loadAnswerReplies(question.id.toString(), questionAnswers)
 
         await loadAnswerAuthors(questionAnswers)
 
@@ -546,6 +669,7 @@ export default function QuestionDetailPage() {
         setAnswers(updatedAnswers)
 
         await loadAnswerAuthors(updatedAnswers)
+        await loadAnswerReplies(question.id.toString(), updatedAnswers)
 
         setTimeout(async () => {
           const updatedQuestion = await getQuestion(questionId)
@@ -556,6 +680,7 @@ export default function QuestionDetailPage() {
             )
             setAnswers(freshAnswers)
             await loadAnswerAuthors(freshAnswers)
+            await loadAnswerReplies(question.id.toString(), freshAnswers)
           }
         }, 500)
 
@@ -600,6 +725,7 @@ export default function QuestionDetailPage() {
         )
         setAnswers(questionAnswers)
         await loadAnswerAuthors(questionAnswers)
+        await loadAnswerReplies(question.id.toString(), questionAnswers)
       } else {
         alert(error.message || '답변 채택에 실패했습니다.')
       }
@@ -710,64 +836,72 @@ export default function QuestionDetailPage() {
           <div className="flex-1">
             {/* 질문 카드 */}
             <Card className="p-8 mb-6 shadow-sm">
+              {/* 제목 영역 */}
               <div className="flex items-start justify-between mb-6">
                 <div className="flex-1">
-                  <div className="flex items-center gap-3 mb-4">
-                    <h1 className="text-3xl font-bold text-balance">
-                      {question.title}
-                    </h1>
-                    {(() => {
-                      const acceptedAnswerId = question.acceptedAnswerId || null
-                      const hasAcceptedAnswer = answers.some(
+                  {/* 제목 + 상태/영수증 버튼 */}
+                  {(() => {
+                    const acceptedAnswerId = question.acceptedAnswerId || null
+                    const hasAcceptedAnswer = answers.some(
+                      (ans) =>
+                        ans.isAccepted === true ||
+                        ans.id.toString() === acceptedAnswerId
+                    )
+                    const isQuestionSolved = question.status === 'solved'
+                    const isSolved =
+                      isQuestionSolved ||
+                      hasAcceptedAnswer ||
+                      !!acceptedAnswerId
+
+                    const lowerAddr = address?.toLowerCase()
+                    const acceptedAnswer =
+                      answers.find(
                         (ans) =>
                           ans.isAccepted === true ||
                           ans.id.toString() === acceptedAnswerId
-                      )
-                      const isQuestionSolved = question.status === 'solved'
-                      const isSolved =
-                        isQuestionSolved ||
-                        hasAcceptedAnswer ||
-                        !!acceptedAnswerId
+                      ) || null
+                    const isQuestionAuthor =
+                      lowerAddr && question.author.toLowerCase() === lowerAddr
+                    const isAnswerAuthor =
+                      lowerAddr &&
+                      acceptedAnswer &&
+                      acceptedAnswer.author.toLowerCase() === lowerAddr
 
-                      const lowerAddr = address?.toLowerCase()
-                      const acceptedAnswer =
-                        answers.find(
-                          (ans) =>
-                            ans.isAccepted === true ||
-                            ans.id.toString() === acceptedAnswerId
-                        ) || null
-                      const isQuestionAuthor =
-                        lowerAddr && question.author.toLowerCase() === lowerAddr
-                      const isAnswerAuthor =
-                        lowerAddr &&
-                        acceptedAnswer &&
-                        acceptedAnswer.author.toLowerCase() === lowerAddr
-
-                      return (
-                        <div className="flex flex-col items-end gap-2">
+                    return (
+                      <div className="flex items-start justify-between mb-4">
+                        {/* 왼쪽 : 해결됨 뱃지 + 제목 */}
+                        <div className="flex flex-col gap-2">
                           {isSolved && (
                             <Badge
                               variant="default"
-                              className="bg-green-600 hover:bg-green-700"
+                              className="bg-green-600 hover:bg-green-700 w-fit"
                             >
                               <Award className="h-3 w-3 mr-1" />
                               해결됨
                             </Badge>
                           )}
-                          {isSolved && (isQuestionAuthor || isAnswerAuthor) && (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={handleViewReceipt}
-                              disabled={isLoadingReceipt}
-                            >
-                              {isLoadingReceipt ? '로딩중...' : '영수증 보기'}
-                            </Button>
-                          )}
+                          <h1 className="text-3xl font-bold text-balance">
+                            {question.title}
+                          </h1>
                         </div>
-                      )
-                    })()}
-                  </div>
+
+                        {/* 오른쪽 : 영수증 보기 버튼 */}
+                        {isSolved && (isQuestionAuthor || isAnswerAuthor) && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={handleViewReceipt}
+                            disabled={isLoadingReceipt}
+                            className="ml-4"
+                          >
+                            {isLoadingReceipt ? '로딩중...' : '영수증 보기'}
+                          </Button>
+                        )}
+                      </div>
+                    )
+                  })()}
+
+                  {/* 태그 */}
                   <div className="flex flex-wrap gap-2 mb-6">
                     {question.tags.map((tag: string) => (
                       <Badge
@@ -780,10 +914,13 @@ export default function QuestionDetailPage() {
                     ))}
                   </div>
                 </div>
+
+                {/* 북마크 버튼 */}
                 <Button
                   variant={isBookmarked ? 'default' : 'outline'}
                   size="sm"
                   onClick={handleBookmark}
+                  className="ml-3"
                 >
                   <Heart
                     className={`h-4 w-4 ${isBookmarked ? 'fill-current' : ''}`}
@@ -791,6 +928,7 @@ export default function QuestionDetailPage() {
                 </Button>
               </div>
 
+              {/* 본문 내용 */}
               <div className="mb-6 space-y-3">
                 <MarkdownContent content={question.content} />
                 {question.githubUrl && question.githubUrl !== '' && (
@@ -808,6 +946,7 @@ export default function QuestionDetailPage() {
                 )}
               </div>
 
+              {/* 하단 메타 영역 */}
               <div className="flex items-center justify-between pt-4 border-t">
                 <div className="flex items-center gap-4">
                   <Link
@@ -888,6 +1027,18 @@ export default function QuestionDetailPage() {
                       ans.isAccepted === true ||
                       ans.id.toString() === acceptedAnswerId
                     const uniqueKey = `${ans.id.toString()}_${ans.questionId.toString()}_${index}`
+
+                    const answerIdStr = ans.id.toString()
+                    const repliesForThisAnswer =
+                      answerReplies[answerIdStr] || []
+
+                    const lowerAddr = address?.toLowerCase()
+                    const isQuestionAuthor =
+                      lowerAddr && question.author.toLowerCase() === lowerAddr
+                    const isAnswerAuthor =
+                      lowerAddr && ans.author.toLowerCase() === lowerAddr
+                    const canReply = isQuestionAuthor || isAnswerAuthor
+
                     return (
                       <Card key={uniqueKey} className="p-6 shadow-sm">
                         {isThisAnswerAccepted && (
@@ -904,7 +1055,77 @@ export default function QuestionDetailPage() {
                           className="mb-4"
                         />
 
-                        <div className="flex items-center justify-between pt-4 border-t">
+                        {/* 대댓글 목록 */}
+                        {repliesForThisAnswer.length > 0 && (
+                          <div className="mt-4 space-y-3">
+                            {repliesForThisAnswer.map((r) => (
+                              <div
+                                key={r.id}
+                                className="flex gap-2 text-sm bg-muted/40 rounded-md px-3 py-2"
+                              >
+                                <div className="mt-1">
+                                  <MessageSquare className="h-3 w-3 text-muted-foreground" />
+                                </div>
+                                <div className="flex-1">
+                                  <div className="flex items-center gap-2 mb-1">
+                                    <span className="font-medium text-xs">
+                                      {r.author.slice(0, 6) +
+                                        '...' +
+                                        r.author.slice(-4)}
+                                    </span>
+                                    <span className="text-[11px] text-muted-foreground">
+                                      {new Date(
+                                        Number(r.createdAt)
+                                      ).toLocaleString()}
+                                    </span>
+                                  </div>
+                                  <MarkdownContent
+                                    content={r.content}
+                                    className="text-sm"
+                                  />
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* 대댓글 입력 (질문자 또는 해당 답변 작성자만) */}
+                        {canReply && (
+                          <div className="mt-4">
+                            <Textarea
+                              placeholder="이 답변에 대한 대댓글을 입력하세요..."
+                              value={replyInputs[answerIdStr] || ''}
+                              onChange={(e) =>
+                                setReplyInputs((prev) => ({
+                                  ...prev,
+                                  [answerIdStr]: e.target.value,
+                                }))
+                              }
+                              className="min-h-[80px] mb-2 text-sm"
+                            />
+                            <div className="flex justify-end">
+                              <Button
+                                size="sm"
+                                onClick={() => handleSubmitReply(answerIdStr)}
+                                disabled={
+                                  !replyInputs[answerIdStr]?.trim() ||
+                                  replyLoading[answerIdStr]
+                                }
+                              >
+                                {replyLoading[answerIdStr] ? (
+                                  <>
+                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                    등록 중...
+                                  </>
+                                ) : (
+                                  '대댓글 등록'
+                                )}
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+
+                        <div className="flex items-center justify-between pt-4 border-t mt-4">
                           <div className="flex items-center gap-3">
                             <Avatar className="h-10 w-10">
                               <AvatarImage
@@ -932,35 +1153,35 @@ export default function QuestionDetailPage() {
                           {(() => {
                             const acceptedAnswerId =
                               question.acceptedAnswerId || null
-                            const isQuestionAuthor =
+                            const isQuestionAuthorInner =
                               isConnected &&
                               address &&
                               address.toLowerCase() ===
                                 question.author.toLowerCase()
-                            const hasAcceptedAnswer = answers.some(
+                            const hasAcceptedAnswerInner = answers.some(
                               (a) =>
                                 a.isAccepted === true ||
                                 a.id.toString() === acceptedAnswerId
                             )
                             const isQuestionSolved =
                               question.status === 'solved'
-                            const isThisAnswerAccepted =
+                            const isThisAnswerAcceptedInner =
                               ans.isAccepted === true ||
                               ans.id.toString() === acceptedAnswerId
                             const canAccept =
-                              isQuestionAuthor &&
-                              !isThisAnswerAccepted &&
+                              isQuestionAuthorInner &&
+                              !isThisAnswerAcceptedInner &&
                               !isQuestionSolved &&
-                              !hasAcceptedAnswer &&
+                              !hasAcceptedAnswerInner &&
                               !acceptedAnswerId
 
-                            const isAnswerAuthor =
+                            const isAnswerAuthorInner =
                               isConnected &&
                               address &&
                               address.toLowerCase() === ans.author.toLowerCase()
 
                             console.log('[UI] 답변 채택 버튼 체크:', {
-                              isQuestionAuthor,
+                              isQuestionAuthor: isQuestionAuthorInner,
                               acceptedAnswerId: acceptedAnswerId,
                               answers: answers.map((a) => ({
                                 id: a.id.toString(),
@@ -968,9 +1189,9 @@ export default function QuestionDetailPage() {
                                 matchesAcceptedId:
                                   a.id.toString() === acceptedAnswerId,
                               })),
-                              hasAcceptedAnswer,
+                              hasAcceptedAnswer: hasAcceptedAnswerInner,
                               isQuestionSolved,
-                              isThisAnswerAccepted,
+                              isThisAnswerAccepted: isThisAnswerAcceptedInner,
                               canAccept,
                               answerId: ans.id.toString(),
                             })
@@ -988,7 +1209,7 @@ export default function QuestionDetailPage() {
                                   </Button>
                                 )}
                                 {!canAccept &&
-                                  isThisAnswerAccepted &&
+                                  isThisAnswerAcceptedInner &&
                                   !isQuestionSolved && (
                                     <Badge
                                       variant="default"
@@ -999,8 +1220,9 @@ export default function QuestionDetailPage() {
                                     </Badge>
                                   )}
                                 {!canAccept &&
-                                  !isThisAnswerAccepted &&
-                                  (isQuestionSolved || hasAcceptedAnswer) && (
+                                  !isThisAnswerAcceptedInner &&
+                                  (isQuestionSolved ||
+                                    hasAcceptedAnswerInner) && (
                                     <Badge
                                       variant="outline"
                                       className="text-muted-foreground"
@@ -1008,16 +1230,17 @@ export default function QuestionDetailPage() {
                                       다른 답변이 채택됨
                                     </Badge>
                                   )}
-                                {isAnswerAuthor && !isThisAnswerAccepted && (
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    className="text-destructive border-destructive/40 hover:bg-destructive hover:text-destructive-foreground"
-                                    onClick={() => handleDeleteAnswer(ans.id)}
-                                  >
-                                    삭제
-                                  </Button>
-                                )}
+                                {isAnswerAuthorInner &&
+                                  !isThisAnswerAcceptedInner && (
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      className="text-destructive border-destructive/40 hover:bg-destructive hover:text-destructive-foreground"
+                                      onClick={() => handleDeleteAnswer(ans.id)}
+                                    >
+                                      삭제
+                                    </Button>
+                                  )}
                               </div>
                             )
                           })()}
@@ -1283,9 +1506,16 @@ export default function QuestionDetailPage() {
                 <summary className="cursor-pointer text-muted-foreground">
                   원본 JSON 보기
                 </summary>
-                <pre className="mt-2 max-h-64 overflow-auto text-[11px]">
-                  {JSON.stringify(receipt, null, 2)}
-                </pre>
+                <div className="mt-2 max-h-64 overflow-auto rounded bg-muted/40 p-2">
+                  <pre
+                    className="
+        text-[11px] font-mono
+        whitespace-pre-wrap break-all
+      "
+                  >
+                    {JSON.stringify(receipt, null, 2)}
+                  </pre>
+                </div>
               </details>
             </div>
           ) : (
