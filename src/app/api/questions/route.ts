@@ -144,28 +144,45 @@ export async function POST(request: NextRequest) {
 
     // 관심 태그 알림 생성
     try {
-      const questionTags: string[] = Array.isArray(tags)
-        ? tags.map((t: string) => t.trim().toLowerCase()).filter((t) => t.length > 0)
-        : []
+      const rawQuestionTags: string[] = Array.isArray(tags) ? tags : []
+      const questionTags = rawQuestionTags
+        .map((t: string) => t.trim())
+        .filter((t) => t.length > 0)
 
       if (questionTags.length > 0) {
         // 관심 태그가 겹치는 사용자 조회 (질문 작성자는 제외)
-        const interestedUsers = await authUsersCollection
+        const candidates = await authUsersCollection
           .find({
             email: { $ne: payload.email },
-            interestTags: { $in: questionTags },
+            interestTags: { $exists: true, $ne: [] },
           })
           .toArray()
+
+        const normalizedQuestionTags = new Set(
+          questionTags.map((t) => t.toLowerCase())
+        )
+
+        const interestedUsers = candidates.filter((u: any) => {
+          const userTags: string[] = Array.isArray(u.interestTags)
+            ? u.interestTags
+            : []
+          const normalizedUserTags = userTags
+            .map((t) => t.trim().toLowerCase())
+            .filter((t) => t.length > 0)
+          return normalizedUserTags.some((t) =>
+            normalizedQuestionTags.has(t)
+          )
+        })
 
         const now = new Date()
 
         if (interestedUsers.length > 0) {
-          const notificationDocs = interestedUsers.map((u) => ({
+          const notificationDocs = interestedUsers.map((u: any) => ({
             userEmail: u.email,
             userAddress: u.walletAddress || null,
             type: 'interest-tag-question',
             title: '관심 태그 새 질문',
-            message: `${(u.userName as string) || '사용자'}님의 관심 태그와 관련된 새 질문이 등록되었습니다: "${title}"`,
+            message: `관심 태그와 관련된 새 질문이 등록되었습니다: "${title}"`,
             questionId: newQuestion.id,
             tags: questionTags,
             isRead: false,

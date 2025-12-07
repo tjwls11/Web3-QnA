@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 import { Bell, Wallet, User, Menu, Plus, LogIn } from 'lucide-react'
 import {
@@ -17,6 +18,7 @@ import { useWallet } from '@/lib/wallet-context'
 import { WalletConnectModal } from './wallet-connect-modal'
 
 export function Header() {
+  const router = useRouter()
   const { 
     isAuthenticated, 
     isConnected, 
@@ -68,6 +70,29 @@ export function Header() {
     }
   }, [isAuthenticated])
 
+  const handleNotificationsOpenChange = async (open: boolean) => {
+    if (open && notifications > 0) {
+      try {
+        await fetch('/api/notifications', {
+          method: 'PATCH',
+        })
+        // 서버에서는 읽음 처리만 하고, 클라이언트에서는 배지만 제거
+        setNotifications(0)
+      } catch (error) {
+        console.error('[알림] 읽음 처리 실패:', error)
+      }
+    }
+  }
+
+  const handleNotificationClick = (item: {
+    id: string
+    questionId: string | null
+  }) => {
+    if (item.questionId) {
+      router.push(`/question/${item.questionId}`)
+    }
+  }
+
   const formatAddress = (addr: string) => {
     return `${addr.slice(0, 6)}...${addr.slice(-4)}`
   }
@@ -109,7 +134,7 @@ export function Header() {
 
             {/* 알림 */}
             {isConnected && (
-              <DropdownMenu>
+              <DropdownMenu onOpenChange={handleNotificationsOpenChange}>
                 <DropdownMenuTrigger asChild>
                   <Button variant="ghost" size="icon" className="relative">
                     <Bell className="h-5 w-5" />
@@ -129,19 +154,23 @@ export function Header() {
                     </div>
                   ) : (
                     notificationItems.map((item) => (
-                      <DropdownMenuItem key={item.id} className="flex flex-col items-start gap-1">
+                      <DropdownMenuItem
+                        key={item.id}
+                        className="flex flex-col items-start gap-1 cursor-pointer"
+                        onClick={() => handleNotificationClick(item)}
+                      >
                         <p className="text-sm font-medium">
                           {item.type === 'interest-tag-question'
                             ? '관심 태그 새 질문'
                             : item.title || '알림'}
                         </p>
-                      <p className="text-xs text-muted-foreground">
+                        <p className="text-xs text-muted-foreground">
                           {item.message ||
                             (item.type === 'interest-tag-question'
                               ? '관심 태그와 관련된 새 질문이 등록되었습니다.'
                               : '')}
-                      </p>
-                  </DropdownMenuItem>
+                        </p>
+                      </DropdownMenuItem>
                     ))
                   )}
                 </DropdownMenuContent>

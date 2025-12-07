@@ -3,6 +3,18 @@ import { uploadToIPFS, downloadFromIPFS } from '@/lib/ipfs'
 import * as storage from '@/lib/storage'
 import type { Question, Answer } from '@/lib/contracts/types'
 
+type AcceptAnswerResult = {
+  success: boolean
+  txHash?: string
+  blockNumber?: number
+  blockHash?: string
+  status?: 'success' | 'failed'
+  gasUsed?: string
+  answerAuthor?: string | null
+  rewardWei?: string | null
+  contractAnswerId?: string
+}
+
 export function useContract() {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -248,7 +260,10 @@ export function useContract() {
 
   // 답변 채택
   const acceptAnswer = useCallback(
-    async (questionId: bigint, answerId: bigint): Promise<boolean> => {
+    async (
+      questionId: bigint,
+      answerId: bigint
+    ): Promise<AcceptAnswerResult> => {
       setIsLoading(true)
       setError(null)
       // 원래 답변 ID 저장 (MongoDB 업데이트용 및 온체인 ID로 사용)
@@ -326,8 +341,9 @@ export function useContract() {
           )
         }
 
+        let txResult: AcceptAnswerResult
         try {
-          await acceptAnswerContract(questionId, contractAnswerId)
+          txResult = await acceptAnswerContract(questionId, contractAnswerId)
         } catch (err: any) {
           // "Answer not found" 에러는 그대로 사용자에게 전달
           if (
@@ -410,11 +426,15 @@ export function useContract() {
           })
         }
 
-        return true
+        return {
+          ...(txResult || { success: true }),
+          success: true,
+          contractAnswerId: contractAnswerId.toString(),
+        }
       } catch (err: any) {
         console.error('답변 채택 실패:', err)
         setError(err.message || '답변 채택에 실패했습니다.')
-        return false
+        return { success: false }
       } finally {
         setIsLoading(false)
       }

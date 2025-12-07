@@ -1795,7 +1795,16 @@ export async function createAnswerContract(
 export async function acceptAnswer(
   questionId: bigint,
   answerId: bigint
-): Promise<boolean> {
+): Promise<{
+  success: boolean
+  txHash?: string
+  blockNumber?: number
+  blockHash?: string
+  status?: 'success' | 'failed'
+  gasUsed?: string
+  answerAuthor?: string | null
+  rewardWei?: string | null
+}> {
   console.log('=== 답변 채택 시작 ===')
   console.log('[채택] 질문 ID:', questionId.toString())
   console.log('[채택] 답변 ID:', answerId.toString())
@@ -2023,7 +2032,16 @@ export async function acceptAnswer(
       })
     }
 
-    return true
+    return {
+      success: true,
+      txHash: receipt.hash,
+      blockNumber: Number(receipt.blockNumber),
+      blockHash: receipt.blockHash,
+      status: receipt.status === 1 ? 'success' : 'failed',
+      gasUsed: receipt.gasUsed?.toString?.() || '',
+      answerAuthor: answerAuthorAddress || null,
+      rewardWei: rewardAmount ? rewardAmount.toString() : null,
+    }
   } catch (error: any) {
     console.error('[채택] 실패:', error)
 

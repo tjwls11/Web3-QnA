@@ -4,6 +4,7 @@ import { Analytics } from '@vercel/analytics/next'
 import './globals.css'
 import { WalletProvider } from '@/lib/wallet-context'
 import { GlobalErrorHandler } from '@/components/global-error-handler'
+import { Footer } from '@/components/footer'
 
 const geist = Geist({ subsets: ['latin'] })
 const geistMono = Geist_Mono({ subsets: ['latin'] })
@@ -25,7 +26,12 @@ export default function RootLayout({
         className={`${geist.className} ${geistMono.className} font-sans antialiased`}
       >
         <GlobalErrorHandler />
-        <WalletProvider>{children}</WalletProvider>
+        <WalletProvider>
+          <div className="min-h-screen flex flex-col bg-background">
+            <main className="flex-1">{children}</main>
+            <Footer />
+          </div>
+        </WalletProvider>
 
         <Analytics />
       </body>

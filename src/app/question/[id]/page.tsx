@@ -23,8 +23,16 @@ import {
 } from 'lucide-react'
 import Link from 'next/link'
 import Header from '@/components/header'
-import { Footer } from '@/components/footer'
 import { MarkdownContent } from '@/components/markdown-content'
+
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 
 export default function QuestionDetailPage() {
   const params = useParams()
@@ -52,6 +60,9 @@ export default function QuestionDetailPage() {
     userName: string
     avatarUrl: string | null
   } | null>(null)
+  const [receipt, setReceipt] = useState<any | null>(null)
+  const [isReceiptModalOpen, setIsReceiptModalOpen] = useState(false)
+  const [isLoadingReceipt, setIsLoadingReceipt] = useState(false)
 
   // 질문 작성자 정보 로드 함수
   const loadQuestionAuthor = async (authorAddress: string) => {
@@ -342,8 +353,8 @@ export default function QuestionDetailPage() {
 
     try {
       const questionId = BigInt(question.id.toString())
-      const success = await acceptAnswer(questionId, answerId)
-      if (success) {
+      const result = await acceptAnswer(questionId, answerId)
+      if (result?.success) {
         const rewardAmount = Number(question.reward) / 1e18
         alert(
           `답변이 채택되었습니다! ${rewardAmount} WAK 토큰이 답변자에게 전송됩니다.`
@@ -389,13 +400,36 @@ export default function QuestionDetailPage() {
           }
         }, 500)
 
-        // 답변자가 자신인 경우 토큰 잔액 새로고침 (블록체인 동기화 포함)
-        if (address) {
-          const { useWallet } = await import('@/lib/wallet-context')
-          // 답변자 주소 확인은 useWallet hook을 통해 할 수 없으므로
-          // 페이지 새로고침을 권장하거나, 답변자가 직접 마이페이지에서 동기화하도록 안내
-          console.log(
-            '[채택 완료] 답변자가 토큰을 받았습니다. 마이페이지에서 잔액을 확인하세요.'
+        // 4단계: txHash 기반 영수증 조회 및 화면에 보이기
+        try {
+          if (result.txHash) {
+            const res = await fetch(
+              `/api/receipt?txHash=${encodeURIComponent(
+                result.txHash
+              )}&questionId=${encodeURIComponent(
+                question.id.toString()
+              )}&answerId=${encodeURIComponent(
+                (result.contractAnswerId || answerId).toString()
+              )}`
+            )
+            if (res.ok) {
+              const data = await res.json()
+              if (data.receipt) {
+                setReceipt(data.receipt)
+                setIsReceiptModalOpen(true)
+              }
+            } else {
+              console.warn(
+                '[질문 상세] 영수증 API 응답 오류:',
+                res.status,
+                res.statusText
+              )
+            }
+          }
+        } catch (receiptError) {
+          console.warn(
+            '[질문 상세] 영수증 조회 실패 (계속 진행):',
+            receiptError
           )
         }
       }
@@ -414,6 +448,53 @@ export default function QuestionDetailPage() {
       } else {
         alert(error.message || '답변 채택에 실패했습니다.')
       }
+    }
+  }
+
+  const handleViewReceipt = async () => {
+    if (!question) return
+    if (!address) {
+      alert('지갑을 연결한 후 다시 시도해주세요.')
+      return
+    }
+
+    try {
+      setIsLoadingReceipt(true)
+      const res = await fetch(
+        `/api/receipts?questionId=${encodeURIComponent(question.id.toString())}`
+      )
+      if (!res.ok) {
+        console.warn('[질문 상세] /api/receipts 호출 실패:', {
+          status: res.status,
+          statusText: res.statusText,
+        })
+        alert('영수증을 불러오지 못했습니다.')
+        return
+      }
+      const data = await res.json()
+      const list: any[] = Array.isArray(data.receipts) ? data.receipts : []
+      if (list.length === 0) {
+        console.warn('[질문 상세] 이 질문에 대한 영수증이 없습니다.', {
+          questionId: question.id.toString(),
+          address: address?.toLowerCase() || null,
+        })
+        alert('이 질문에 대한 영수증이 없습니다.')
+        return
+      }
+
+      const lower = address.toLowerCase()
+      const mine =
+        list.find(
+          (r) => r.questionAuthor === lower || r.answerAuthor === lower
+        ) || list[0]
+
+      setReceipt(mine)
+      setIsReceiptModalOpen(true)
+    } catch (err) {
+      console.error('[질문 상세] 영수증 조회 실패:', err)
+      alert('영수증을 불러오지 못했습니다.')
+    } finally {
+      setIsLoadingReceipt(false)
     }
   }
 
@@ -493,29 +574,43 @@ export default function QuestionDetailPage() {
                         hasAcceptedAnswer ||
                         !!acceptedAnswerId
 
-                      console.log('[UI] 질문 해결 상태:', {
-                        status: question.status,
-                        acceptedAnswerId: acceptedAnswerId,
-                        answers: answers.map((a) => ({
-                          id: a.id.toString(),
-                          isAccepted: a.isAccepted,
-                          matchesAcceptedId:
-                            a.id.toString() === acceptedAnswerId,
-                        })),
-                        hasAcceptedAnswer,
-                        isQuestionSolved,
-                        isSolved,
-                      })
+                      const lowerAddr = address?.toLowerCase()
+                      const acceptedAnswer =
+                        answers.find(
+                          (ans) =>
+                            ans.isAccepted === true ||
+                            ans.id.toString() === acceptedAnswerId
+                        ) || null
+                      const isQuestionAuthor =
+                        lowerAddr && question.author.toLowerCase() === lowerAddr
+                      const isAnswerAuthor =
+                        lowerAddr &&
+                        acceptedAnswer &&
+                        acceptedAnswer.author.toLowerCase() === lowerAddr
 
-                      return isSolved ? (
-                        <Badge
-                          variant="default"
-                          className="bg-green-600 hover:bg-green-700"
-                        >
-                          <Award className="h-3 w-3 mr-1" />
-                          해결됨
-                        </Badge>
-                      ) : null
+                      return (
+                        <div className="flex flex-col items-end gap-2">
+                          {isSolved && (
+                            <Badge
+                              variant="default"
+                              className="bg-green-600 hover:bg-green-700"
+                            >
+                              <Award className="h-3 w-3 mr-1" />
+                              해결됨
+                            </Badge>
+                          )}
+                          {isSolved && (isQuestionAuthor || isAnswerAuthor) && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={handleViewReceipt}
+                              disabled={isLoadingReceipt}
+                            >
+                              {isLoadingReceipt ? '로딩중...' : '영수증 보기'}
+                            </Button>
+                          )}
+                        </div>
+                      )
                     })()}
                   </div>
                   <div className="flex flex-wrap gap-2 mb-6">
@@ -926,7 +1021,99 @@ export default function QuestionDetailPage() {
           </aside>
         </div>
       </div>
-      <Footer />
+
+      {/* 🔽🔽 추가: 영수증 모달 UI */}
+      <Dialog open={isReceiptModalOpen} onOpenChange={setIsReceiptModalOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>온체인 영수증</DialogTitle>
+            <DialogDescription>
+              채택 트랜잭션을 기반으로 생성된 영수증입니다.
+            </DialogDescription>
+          </DialogHeader>
+
+          {isLoadingReceipt ? (
+            <div className="flex items-center justify-center py-6 space-x-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              <span>영수증을 불러오는 중입니다...</span>
+            </div>
+          ) : receipt ? (
+            <div className="space-y-3 text-sm">
+              {receipt.questionId && (
+                <div>
+                  <span className="font-medium mr-2">질문 ID:</span>
+                  <span>{receipt.questionId}</span>
+                </div>
+              )}
+              {receipt.answerId && (
+                <div>
+                  <span className="font-medium mr-2">답변 ID:</span>
+                  <span>{receipt.answerId}</span>
+                </div>
+              )}
+              {receipt.role && (
+                <div>
+                  <span className="font-medium mr-2">역할:</span>
+                  <span>
+                    {receipt.role === 'questioner'
+                      ? '질문자'
+                      : receipt.role === 'answerer'
+                      ? '답변자'
+                      : receipt.role}
+                  </span>
+                </div>
+              )}
+              {receipt.reward || receipt.rewardNormalized ? (
+                <div>
+                  <span className="font-medium mr-2">보상:</span>
+                  <span>
+                    {(
+                      receipt.rewardNormalized ??
+                      Number(receipt.reward ?? 0) / 1e18
+                    ).toFixed(4)}{' '}
+                    {receipt.tokenSymbol ?? 'WAK'}
+                  </span>
+                </div>
+              ) : null}
+              {receipt.txHash && (
+                <div>
+                  <span className="font-medium mr-2">TX Hash:</span>
+                  <span className="font-mono break-all">{receipt.txHash}</span>
+                </div>
+              )}
+              {receipt.blockNumber != null && (
+                <div>
+                  <span className="font-medium mr-2">블록 번호:</span>
+                  <span>{receipt.blockNumber}</span>
+                </div>
+              )}
+
+              {/* 원본 JSON 디버깅용 */}
+              <details className="mt-3 rounded border px-3 py-2 text-xs">
+                <summary className="cursor-pointer text-muted-foreground">
+                  원본 JSON 보기
+                </summary>
+                <pre className="mt-2 max-h-64 overflow-auto text-[11px]">
+                  {JSON.stringify(receipt, null, 2)}
+                </pre>
+              </details>
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              영수증 데이터를 불러오지 못했습니다.
+            </p>
+          )}
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setIsReceiptModalOpen(false)}
+            >
+              닫기
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

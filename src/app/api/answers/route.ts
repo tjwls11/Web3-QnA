@@ -32,7 +32,7 @@ export async function POST(request: NextRequest) {
 
     // questionId를 문자열로 정규화 (질문 ID와 정확히 일치하도록)
     const normalizedQuestionId = questionId.toString()
-    
+
     // 질문이 이미 해결되었는지 확인
     const question = await questionsCollection.findOne({
       id: normalizedQuestionId,
@@ -45,7 +45,7 @@ export async function POST(request: NextRequest) {
         )
       }
     }
-    
+
     console.log('[답변 생성] 요청 데이터:', {
       questionId: normalizedQuestionId,
       author: author.toLowerCase(),
@@ -70,7 +70,7 @@ export async function POST(request: NextRequest) {
       author: answer.author,
       contentLength: answer.content.length,
     })
-    
+
     // MongoDB에 답변 저장
     let insertResult
     try {
@@ -84,7 +84,7 @@ export async function POST(request: NextRequest) {
       console.error('[답변 생성] insertOne 실패:', insertError)
       throw new Error(`답변 저장 실패: ${insertError.message}`)
     }
-    
+
     // 저장 확인: 방금 저장한 답변을 다시 조회해서 확인 (선택적)
     try {
       const savedAnswer = await answersCollection.findOne({ id: answer.id })
@@ -114,7 +114,7 @@ export async function POST(request: NextRequest) {
       modifiedCount: questionUpdateResult.modifiedCount,
       questionId: normalizedQuestionId,
     })
-    
+
     if (questionUpdateResult.matchedCount === 0) {
       console.warn(
         '[답변 생성] 질문을 찾을 수 없습니다. questionId:',
@@ -125,7 +125,7 @@ export async function POST(request: NextRequest) {
     // 사용자의 답변 수 증가 및 레벨 업데이트
     const usersCollection = db.collection('users')
     const authUsersCollection = db.collection('authUsers')
-    
+
     // users 컬렉션 업데이트
     // 먼저 사용자가 존재하는지 확인
     const existingUser = await usersCollection.findOne({
@@ -133,22 +133,22 @@ export async function POST(request: NextRequest) {
     })
     if (existingUser) {
       // 사용자가 있으면 answerCount만 증가
-    await usersCollection.updateOne(
-      { address: answer.author },
+      await usersCollection.updateOne(
+        { address: answer.author },
         { $inc: { answerCount: 1 } }
       )
     } else {
       // 사용자가 없으면 새로 생성 (answerCount는 1로 시작)
       await usersCollection.insertOne({
-          address: answer.author,
-          userName: '',
-          registeredAt: new Date(),
-          questionCount: 0,
-          answerCount: 1,
-          acceptedAnswerCount: 0,
-          reputation: 0,
+        address: answer.author,
+        userName: '',
+        registeredAt: new Date(),
+        questionCount: 0,
+        answerCount: 1,
+        acceptedAnswerCount: 0,
+        reputation: 0,
       })
-        }
+    }
 
     // authUsers 컬렉션도 업데이트 (지갑 주소가 있는 경우)
     const user = await authUsersCollection.findOne({
@@ -180,19 +180,19 @@ export async function POST(request: NextRequest) {
       name: error.name,
       error: error,
     })
-    
+
     const errorMessage = error.message || '답변 생성에 실패했습니다.'
     const errorDetails =
       process.env.NODE_ENV === 'development'
         ? {
-      message: error.message,
-      stack: error.stack,
-      name: error.name,
+            message: error.message,
+            stack: error.stack,
+            name: error.name,
           }
         : undefined
-    
+
     return NextResponse.json(
-      { 
+      {
         error: errorMessage,
         details: errorDetails,
       },
@@ -220,7 +220,7 @@ export async function GET(request: NextRequest) {
         normalizedQuestionId,
         typeof normalizedQuestionId
       )
-      
+
       // DB에 저장된 모든 답변의 questionId 확인 (디버깅용)
       const allAnswers = await answersCollection.find({}).toArray()
       console.log('[답변 조회] ========== 디버깅 정보 ==========')
@@ -231,7 +231,7 @@ export async function GET(request: NextRequest) {
         typeof normalizedQuestionId
       )
       console.log('[답변 조회] DB의 모든 답변 개수:', allAnswers.length, '개')
-      
+
       if (allAnswers.length > 0) {
         console.log('[답변 조회] DB의 모든 답변 상세:')
         allAnswers.forEach((a, index) => {
@@ -249,7 +249,7 @@ export async function GET(request: NextRequest) {
       } else {
         console.log('[답변 조회] DB에 답변이 하나도 없습니다.')
       }
-      
+
       // 질문도 확인
       const questionsCollection = db.collection('questions')
       const questionDoc = await questionsCollection.findOne({
@@ -267,7 +267,7 @@ export async function GET(request: NextRequest) {
           normalizedQuestionId
         )
       }
-      
+
       const answers = await answersCollection
         .find({ questionId: normalizedQuestionId })
         .sort({ createdAt: -1 })
@@ -289,11 +289,11 @@ export async function GET(request: NextRequest) {
       // 질문 정보에서 채택된 답변 ID 가져오기
       const acceptedAnswerId = questionDoc?.acceptedAnswerId || null
       console.log('[답변 조회] 질문의 채택된 답변 ID:', acceptedAnswerId)
-      
+
       const mappedAnswers = answers.map((a) => {
         // 질문 테이블의 acceptedAnswerId와 비교하거나 답변의 isAccepted 확인
         const isAccepted = a.id === acceptedAnswerId || a.isAccepted === true
-        
+
         const statusText = isAccepted ? '채택됨' : '미채택'
         console.log(`[답변 조회] 답변 ${a.id}: ${statusText}`, {
           answerId: a.id,
@@ -301,7 +301,7 @@ export async function GET(request: NextRequest) {
           isAccepted: a.isAccepted,
           finalIsAccepted: isAccepted,
         })
-        
+
         return {
           id: a.id || `${a.questionId}_${a.createdAt.getTime()}`,
           questionId: a.questionId.toString(),
@@ -330,7 +330,7 @@ export async function GET(request: NextRequest) {
           const questionDoc = await questionsCollection.findOne({
             id: a.questionId,
           })
-          
+
           // 답변 ID를 BigInt로 변환 시도
           let answerId = BigInt(0)
           if (a.id) {
@@ -357,7 +357,7 @@ export async function GET(request: NextRequest) {
             // ID가 없으면 생성 시간을 사용
             answerId = BigInt(a.createdAt.getTime())
           }
-          
+
           return {
             id: answerId.toString(),
             questionId: (a.questionId || '').toString(),
@@ -414,12 +414,12 @@ export async function PUT(request: NextRequest) {
           { status: 400 }
         )
       }
-      
+
       await answersCollection.updateOne(
         { id: answerId.toString() },
         { $set: { contentHash: contentHash } }
       )
-      
+
       return NextResponse.json({ success: true })
     }
 
@@ -432,27 +432,54 @@ export async function PUT(request: NextRequest) {
     }
 
     console.log('[답변 채택] 시작:', { answerId, questionId })
-    
-    // 답변을 채택 상태로 변경
+
+    const normalizedQuestionId = questionId.toString()
+    const answerIdStr = answerId.toString()
+    const idPrefix = `${normalizedQuestionId}_${answerIdStr}_`
+    const regex = new RegExp(`^${idPrefix}`)
+
+    let answerDoc = await answersCollection.findOne({
+      questionId: normalizedQuestionId,
+      id: { $regex: regex },
+    })
+
+    if (!answerDoc) {
+      answerDoc = await answersCollection.findOne({
+        id: answerIdStr,
+        questionId: normalizedQuestionId,
+      })
+    }
+
+    if (!answerDoc) {
+      console.error('[답변 채택] 해당 답변을 찾을 수 없습니다.', {
+        questionId: normalizedQuestionId,
+        answerId: answerIdStr,
+      })
+      return NextResponse.json(
+        { error: '답변을 찾을 수 없습니다.' },
+        { status: 404 }
+      )
+    }
+
     const updateData: any = { isAccepted: true }
     if (contentHash) {
       updateData.contentHash = contentHash
     }
-    
+
     const answerUpdateResult = await answersCollection.updateOne(
-      { id: answerId.toString() },
+      { _id: (answerDoc as any)._id },
       { $set: updateData }
     )
-    
+
     console.log('[답변 채택] 답변 업데이트 결과:', {
       matchedCount: answerUpdateResult.matchedCount,
       modifiedCount: answerUpdateResult.modifiedCount,
-      answerId: answerId.toString(),
+      answerId: answerIdStr,
+      dbId: answerDoc.id,
     })
-    
-    // 업데이트된 답변 확인
+
     const updatedAnswer = await answersCollection.findOne({
-      id: answerId.toString(),
+      _id: (answerDoc as any)._id,
     })
     console.log('[답변 채택] 업데이트된 답변:', {
       id: updatedAnswer?.id,
@@ -470,12 +497,12 @@ export async function PUT(request: NextRequest) {
         { status: 404 }
       )
     }
-    
+
     // reward는 wei 단위로 저장되어 있을 수 있으므로 확인 후 변환
     let rewardAmount = 0
     if (question.reward) {
       const rewardValue = Number(question.reward)
-      
+
       // reward가 1e18 이상이면 wei 단위로 간주하고 WAK으로 변환
       // 1 WAK = 1e18 wei이므로, 1보다 크면 wei 단위로 간주
       if (rewardValue >= 1e18) {
@@ -500,26 +527,25 @@ export async function PUT(request: NextRequest) {
       question.reward,
       ')'
     )
-    
+
     // 질문 상태를 'solved'로 변경하고 채택된 답변 ID 저장
     const questionUpdateResult = await questionsCollection.updateOne(
       { id: questionId.toString() },
-      { 
-        $set: { 
+      {
+        $set: {
           status: 'solved',
           acceptedAnswerId: answerId.toString(),
         },
       }
     )
-    
+
     console.log('[답변 채택] 질문 업데이트 결과:', {
       matchedCount: questionUpdateResult.matchedCount,
       modifiedCount: questionUpdateResult.modifiedCount,
       questionId: questionId.toString(),
       acceptedAnswerId: answerId.toString(),
     })
-    
-    // 업데이트된 질문 확인
+
     const updatedQuestion = await questionsCollection.findOne({
       id: questionId.toString(),
     })
@@ -536,7 +562,7 @@ export async function PUT(request: NextRequest) {
       updatedAnswerAuthor: updatedAnswer?.author,
       willProceed: rewardAmount > 0 && !!updatedAnswer,
     })
-    
+
     if (!updatedAnswer) {
       console.error(
         '[답변 채택] 업데이트된 답변을 찾을 수 없습니다. answerId:',
@@ -547,11 +573,11 @@ export async function PUT(request: NextRequest) {
         { status: 404 }
       )
     }
-    
+
     if (rewardAmount > 0) {
       const answerAuthor = updatedAnswer.author.toLowerCase()
       console.log('[답변 채택] 답변자 지갑 주소:', answerAuthor)
-      
+
       const authUsersCollection = db.collection('authUsers')
       const usersCollection = db.collection('users')
 
@@ -559,18 +585,18 @@ export async function PUT(request: NextRequest) {
       const answerer = await authUsersCollection.findOne({
         walletAddress: answerAuthor,
       })
-      
+
       console.log('[답변 채택] 답변자 조회 결과 (DB 기준):', {
         answerAuthor,
         found: !!answerer,
         answererEmail: answerer?.email,
         answererTokenBalance: answerer?.tokenBalance,
       })
-      
+
       if (answerer) {
         const existingBalance = answerer.tokenBalance || 0
         const finalBalance = existingBalance + rewardAmount
-        
+
         const updateResult = await authUsersCollection.updateOne(
           { walletAddress: answerAuthor },
           {
@@ -578,7 +604,7 @@ export async function PUT(request: NextRequest) {
             $inc: { acceptedAnswerCount: 1 },
           }
         )
-        
+
         console.log('[답변 채택] 답변자 토큰 잔액/채택 수 업데이트:', {
           답변자: answerAuthor,
           이전DB잔액: existingBalance,
@@ -589,7 +615,7 @@ export async function PUT(request: NextRequest) {
             modifiedCount: updateResult.modifiedCount,
           },
         })
-        
+
         // users 컬렉션의 acceptedAnswerCount도 증가
         await usersCollection.updateOne(
           { address: answerAuthor },

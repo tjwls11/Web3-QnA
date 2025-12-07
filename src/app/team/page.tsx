@@ -1,38 +1,69 @@
-'use client'
+import React from 'react'
+import Image from 'next/image'
+import Link from 'next/link'
 
-import { Header } from '@/components/header'
-import { Footer } from '@/components/footer'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Users } from 'lucide-react'
+interface TeamMember {
+  name: string
+  role: string
+  github: string
+  image: string
+}
+
+const teamMembers: TeamMember[] = [
+  {
+    name: '백서진',
+    role: '팀장',
+    github: 'https://github.com/000712',
+    image: '/team/geonhee.jpg',
+  },
+  {
+    name: '윤지현',
+    role: '커뮤니티 담당 팀원',
+    github: 'https://github.com/hyejeong22',
+    image: '/team/hyejeong.png',
+  },
+
+  {
+    name: '임한글',
+    role: '커뮤니티 담당 팀원',
+    github: 'https://github.com/tjwls11 ',
+    image: '/team/seojin.png',
+  },
+]
 
 export default function TeamPage() {
   return (
-    <div className="min-h-screen bg-background">
-      <Header />
-      <div className="container mx-auto px-4 py-8 lg:px-8">
-        <Card className="max-w-4xl mx-auto">
-          <CardHeader>
-            <div className="flex items-center gap-3">
-              <Users className="h-8 w-8 text-primary" />
-              <CardTitle className="text-2xl">Team</CardTitle>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              <p className="text-muted-foreground">
-                WAK QnA 프로젝트를 함께 만드는 팀입니다.
-              </p>
-              <div className="space-y-2">
-                <h3 className="font-semibold text-lg">팀 소개</h3>
-                <p className="text-sm text-muted-foreground">
-                  이 페이지는 임시 페이지입니다. 팀원 정보를 추가하세요.
-                </p>
+    <div className="container mx-auto px-4">
+      {/* 팀 소개 섹션 */}
+      <section className="py-32">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-16 px-8">
+          {teamMembers.map((member, index) => (
+            <div key={index} className="bg-white rounded-xl shadow-md p-8">
+              <div className="relative w-full aspect-square mb-8">
+                <Image
+                  src={member.image}
+                  alt={member.name}
+                  fill
+                  sizes="(max-width: 768px) 100vw,(max-width: 1200px) 50vw,25vw"
+                  className="rounded-lg object-cover"
+                  priority={index < 2}
+                />
+              </div>
+              <h2 className="text-xl font-semibold mb-4">{member.name}</h2>
+              <p className="text-gray-600 mb-8">{member.role}</p>
+              <div className="space-y-4">
+                <Link
+                  href={member.github}
+                  className="block text-blue-600 hover:text-blue-800 transition-colors"
+                  target="_blank"
+                >
+                  GitHub
+                </Link>
               </div>
             </div>
-          </CardContent>
-        </Card>
-      </div>
-      <Footer />
+          ))}
+        </div>
+      </section>
     </div>
   )
 }

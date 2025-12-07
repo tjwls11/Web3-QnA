@@ -25,15 +25,14 @@ export default function WakPage() {
               <div className="space-y-2">
                 <h3 className="font-semibold text-lg">WAK 토큰 소개</h3>
                 <p className="text-sm text-muted-foreground">
-                  이 페이지는 임시 페이지입니다. WAK 토큰에 대한 상세 정보를 추가하세요.
+                  이 페이지는 임시 페이지입니다. WAK 토큰에 대한 상세 정보를
+                  추가하세요.
                 </p>
               </div>
             </div>
           </CardContent>
         </Card>
       </div>
-      <Footer />
     </div>
   )
 }
-

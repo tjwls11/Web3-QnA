@@ -1,7 +1,6 @@
 'use client'
 
 import { Header } from '@/components/header'
-import { Footer } from '@/components/footer'
 import { ProtectedPage } from '@/components/protected-page'
 import { Button } from '@/components/ui/button'
 import {
@@ -128,6 +127,21 @@ export default function MyPage() {
       createdAt: number
     }>
   >([])
+  const [receipts, setReceipts] = useState<
+    Array<{
+      id: string
+      questionId: string
+      answerId: string
+      questionTitle: string
+      rewardNormalized: number
+      tokenSymbol: string
+      acceptedAt: number
+      role: 'questioner' | 'answerer' | 'other'
+      txHash: string
+      explorerUrl?: string
+    }>
+  >([])
+  const [isLoadingReceipts, setIsLoadingReceipts] = useState(false)
   const totalQuestions = myQuestions.length
   const totalAnswers = myAnswers.length
   const totalAcceptedAnswers = myAnswers.filter((ans) => ans.isAccepted).length
@@ -190,10 +204,10 @@ export default function MyPage() {
       }
 
       // 서버에서 못 가져온 경우 localStorage 사용
-    const savedTags = localStorage.getItem('interestTags')
-    if (savedTags) {
+      const savedTags = localStorage.getItem('interestTags')
+      if (savedTags) {
         try {
-      setInterestTags(JSON.parse(savedTags))
+          setInterestTags(JSON.parse(savedTags))
           return
         } catch {
           // 파싱 실패 시 기본값 사용
@@ -213,7 +227,7 @@ export default function MyPage() {
       return
     }
 
-      localStorage.setItem('interestTags', JSON.stringify(interestTags))
+    localStorage.setItem('interestTags', JSON.stringify(interestTags))
 
     const saveTags = async () => {
       try {
@@ -408,6 +422,51 @@ export default function MyPage() {
     }
 
     loadTransactions()
+  }, [isAuthenticated])
+
+  // 영수증 로드
+  useEffect(() => {
+    const loadReceipts = async () => {
+      if (!isAuthenticated) {
+        setReceipts([])
+        return
+      }
+
+      setIsLoadingReceipts(true)
+      try {
+        const res = await fetch('/api/receipts')
+        if (!res.ok) {
+          setReceipts([])
+          return
+        }
+        const data = await res.json()
+        const items: any[] = Array.isArray(data.receipts) ? data.receipts : []
+        setReceipts(
+          items.map((r) => ({
+            id: r.id,
+            questionId: r.questionId,
+            answerId: r.answerId,
+            questionTitle: r.questionTitle || `질문 #${r.questionId}`,
+            rewardNormalized:
+              typeof r.rewardNormalized === 'number'
+                ? r.rewardNormalized
+                : Number(r.reward || 0) / 1e18,
+            tokenSymbol: r.tokenSymbol || 'WAK',
+            acceptedAt: r.acceptedAt || r.issuedAt || Date.now(),
+            role: r.role || 'other',
+            txHash: r.txHash,
+            explorerUrl: r.explorerUrl,
+          }))
+        )
+      } catch (error) {
+        console.error('[마이페이지] 영수증 로드 실패:', error)
+        setReceipts([])
+      } finally {
+        setIsLoadingReceipts(false)
+      }
+    }
+
+    loadReceipts()
   }, [isAuthenticated])
 
   const handleNameChange = async () => {
@@ -927,10 +986,11 @@ export default function MyPage() {
             {/* 메인 콘텐츠 */}
             <div>
               <Tabs defaultValue="questions" className="w-full">
-                <TabsList className="grid w-full grid-cols-4">
+                <TabsList className="grid w-full grid-cols-5">
                   <TabsTrigger value="questions">내 질문</TabsTrigger>
                   <TabsTrigger value="answers">내 답변</TabsTrigger>
                   <TabsTrigger value="bookmarks">찜 목록</TabsTrigger>
+                  <TabsTrigger value="receipts">영수증</TabsTrigger>
                   <TabsTrigger value="rewards">환전/출금 내역</TabsTrigger>
                 </TabsList>
 
@@ -1042,6 +1102,92 @@ export default function MyPage() {
                       </Card>
                     ))
                   )}
+                </TabsContent>
+
+                {/* 영수증 탭 */}
+                <TabsContent value="receipts" className="space-y-4">
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>영수증</CardTitle>
+                      <CardDescription>
+                        질문 보상(채택)과 관련된 온체인 트랜잭션 영수증입니다.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      {isLoadingReceipts ? (
+                        <div className="flex items-center justify-center py-8">
+                          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+                        </div>
+                      ) : receipts.length === 0 ? (
+                        <p className="text-center text-muted-foreground py-8">
+                          아직 영수증이 없습니다. 질문을 올리고 답변을 채택해
+                          보세요.
+                        </p>
+                      ) : (
+                        <div className="space-y-3">
+                          {receipts.map((r) => (
+                            <div
+                              key={r.id}
+                              className="flex items-center justify-between rounded-lg border border-border p-4"
+                            >
+                              <div className="flex flex-col gap-1">
+                                <div className="flex items-center gap-2">
+                                  <Badge
+                                    variant={
+                                      r.role === 'questioner'
+                                        ? 'outline'
+                                        : 'secondary'
+                                    }
+                                  >
+                                    {r.role === 'questioner'
+                                      ? '질문자'
+                                      : r.role === 'answerer'
+                                      ? '답변자'
+                                      : '참여자'}
+                                  </Badge>
+                                  <Link
+                                    href={`/question/${r.questionId}`}
+                                    className="font-medium hover:text-primary"
+                                  >
+                                    {r.questionTitle}
+                                  </Link>
+                                </div>
+                                <p className="text-xs text-muted-foreground">
+                                  {new Date(r.acceptedAt).toLocaleString()}
+                                  {r.txHash &&
+                                    ` • TX: ${r.txHash.slice(0, 10)}...`}
+                                </p>
+                              </div>
+                              <div className="flex flex-col items-end gap-1 text-sm">
+                                <span className="font-bold text-primary">
+                                  {r.rewardNormalized.toFixed(4)}{' '}
+                                  {r.tokenSymbol}
+                                </span>
+                                <div className="flex gap-2">
+                                  <Link
+                                    href={`/question/${r.questionId}`}
+                                    className="text-xs text-primary hover:underline"
+                                  >
+                                    질문으로 이동
+                                  </Link>
+                                  {r.explorerUrl && (
+                                    <a
+                                      href={r.explorerUrl}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="text-xs text-muted-foreground hover:underline"
+                                    >
+                                      익스플로러
+                                    </a>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
                 </TabsContent>
 
                 {/* 환전/출금 내역 탭 */}
@@ -1166,9 +1312,7 @@ export default function MyPage() {
           <DialogContent>
             <DialogHeader>
               <DialogTitle>이름 변경</DialogTitle>
-              <DialogDescription>
-                새로운 이름을 입력해주세요.
-              </DialogDescription>
+              <DialogDescription>새로운 이름을 입력해주세요.</DialogDescription>
             </DialogHeader>
             <div className="grid gap-4 py-4">
               <div className="grid gap-2">
@@ -1254,11 +1398,7 @@ export default function MyPage() {
                     <div className="flex items-center gap-4">
                       <Avatar className="h-20 w-20">
                         <AvatarImage
-                          src={
-                            avatarPreview ||
-                            avatarUrl ||
-                            undefined
-                          }
+                          src={avatarPreview || avatarUrl || undefined}
                         />
                         <AvatarFallback className="text-xl">
                           {userName?.[0]?.toUpperCase() || '?'}
@@ -1437,10 +1577,6 @@ export default function MyPage() {
           <DialogContent>
             <DialogHeader>
               <DialogTitle>ETH → WAK 환전</DialogTitle>
-              <DialogDescription>
-                SepoliaETH를 WAK 토큰으로 환전합니다. 환전 비율: 0.01 ETH = 1
-                WAK
-              </DialogDescription>
             </DialogHeader>
             <div className="grid gap-4 py-4">
               {/* Current ETH Balance */}
@@ -1686,7 +1822,6 @@ export default function MyPage() {
           </DialogContent>
         </Dialog>
       </div>
-      <Footer />
     </ProtectedPage>
   )
 }
